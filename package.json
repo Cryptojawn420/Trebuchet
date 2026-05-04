@@ -1,0 +1,41 @@
+{
+  "name": "trebuchet",
+  "version": "1.1.0",
+  "description": "A barebones Solana token launcher with Metaplex metadata and Raydium CLMM single-sided LP. No frills, no extractive nonsense.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "solana",
+    "token",
+    "metaplex",
+    "arweave",
+    "raydium",
+    "clmm"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@metaplex-foundation/mpl-token-metadata": "^3.2.1",
+    "@metaplex-foundation/umi": "^0.9.2",
+    "@metaplex-foundation/umi-bundle-defaults": "^0.9.2",
+    "@metaplex-foundation/umi-uploader-irys": "^0.9.2",
+    "@metaplex-foundation/umi-web3js-adapters": "^0.9.2",
+    "@raydium-io/raydium-sdk-v2": "0.1.144-alpha",
+    "@solana/spl-token": "^0.4.8",
+    "@solana/web3.js": "^1.95.2",
+    "bn.js": "^5.2.1",
+    "cors": "^2.8.5",
+    "decimal.js": "^10.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10"
+  }
+}

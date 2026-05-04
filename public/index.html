@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trebuchet</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* ========================================================
+           Layout & visual style
+           ======================================================== */
+        .hero {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 1.5rem 1.5rem 1rem;
+        }
+        .hero .title {
+            margin-bottom: 0.75rem;
+            line-height: 1.2;
+        }
+        .hero .subtitle {
+            line-height: 1.4;
+        }
+        body {
+            background: #f5f6fa;
+        }
+
+        /* ========================================================
+           Sticky top bar (status + cancel button)
+           ======================================================== */
+        #stickyBar {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            background: rgba(255, 255, 255, 0.96);
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid #e0e0e0;
+            padding: 0.5rem 1rem;
+            display: none;       /* hidden until wallet generated */
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+        }
+        #stickyBar.is-visible {
+            display: flex;
+        }
+        #stickyBar .status-text {
+            font-size: 0.9em;
+            color: #555;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        #stickyBar .status-text strong {
+            color: #1a1a1a;
+        }
+
+        /* ========================================================
+           Collapsible step cards
+           ========================================================
+           States:
+              pending   — collapsed, dimmed, header non-clickable
+              active    — expanded, full opacity, header non-clickable
+              completed — collapsed, full opacity, header clickable to re-expand
+        */
+        .step-card {
+            margin-bottom: 0.75rem;
+            transition: opacity 0.2s ease, border-color 0.2s ease;
+            border-left: 4px solid transparent;
+        }
+        .step-card.is-pending {
+            opacity: 0.55;
+        }
+        .step-card.is-active {
+            opacity: 1;
+            border-left-color: #3273dc;
+        }
+        .step-card.is-completed {
+            opacity: 1;
+            border-left-color: #48c774;
+        }
+
+        .step-header {
+            padding: 0.85rem 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            user-select: none;
+        }
+        .step-card.is-completed .step-header {
+            cursor: pointer;
+        }
+        .step-card.is-completed .step-header:hover {
+            background: #fafbfc;
+        }
+        .step-header .step-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.75rem;
+            height: 1.75rem;
+            border-radius: 50%;
+            background: #dbdbdb;
+            color: white;
+            font-weight: 600;
+            font-size: 0.9em;
+            flex-shrink: 0;
+        }
+        .step-card.is-active .step-header .step-num {
+            background: #3273dc;
+        }
+        .step-card.is-completed .step-header .step-num {
+            background: #48c774;
+        }
+        .step-header .step-title {
+            font-weight: 600;
+            font-size: 1.05em;
+            flex: 1;
+            min-width: 0;
+        }
+        .step-header .step-summary {
+            color: #888;
+            font-size: 0.85em;
+            font-weight: normal;
+            margin-left: 0.5em;
+        }
+        .step-header .step-chevron {
+            color: #999;
+            transition: transform 0.2s ease;
+        }
+        .step-card.is-pending .step-header .step-chevron,
+        .step-card.is-active .step-header .step-chevron {
+            display: none;
+        }
+        .step-body {
+            padding: 0 1.25rem 1.25rem;
+            border-top: 1px solid #f0f0f0;
+            padding-top: 1rem;
+        }
+        .step-card:not(.is-active) .step-body {
+            display: none;
+        }
+
+        /* ========================================================
+           Activity log (compact, dockable)
+           ======================================================== */
+        #activityLogContainer {
+            position: fixed;
+            bottom: 0;
+            right: 0;
+            left: 0;
+            background: #1a1a1a;
+            color: #ccc;
+            font-family: monospace;
+            font-size: 0.8em;
+            border-top: 1px solid #333;
+            z-index: 25;
+            transition: max-height 0.25s ease;
+            max-height: 32px;
+            overflow: hidden;
+        }
+        #activityLogContainer.is-expanded {
+            max-height: 280px;
+        }
+        #activityLogHeader {
+            padding: 0.4rem 1rem;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #222;
+            color: #aaa;
+        }
+        #activityLogHeader:hover {
+            background: #2a2a2a;
+        }
+        #activityLog {
+            padding: 0.5rem 1rem;
+            overflow-y: auto;
+            max-height: 240px;
+        }
+        .log-entry { margin-bottom: 2px; line-height: 1.4; }
+        .log-entry .timestamp { color: #666; margin-right: 8px; }
+        .log-entry.info span:not(.timestamp) { color: #00ff88; }
+        .log-entry.success span:not(.timestamp) { color: #48c774; }
+        .log-entry.danger span:not(.timestamp) { color: #ff5266; }
+        .log-entry.warning span:not(.timestamp) { color: #ffdd57; }
+
+        /* Add bottom padding to body so log doesn't cover content */
+        body.has-log { padding-bottom: 60px; }
+        body.log-expanded { padding-bottom: 290px; }
+
+        /* ========================================================
+           Misc components (carried over from previous design)
+           ======================================================== */
+        .qr-code {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+            display: inline-block;
+        }
+        .secret-key-container {
+            word-break: break-all;
+            font-family: monospace;
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-size: 0.85em;
+        }
+        .hidden { display: none; }
+
+        /* Pool config */
+        .pool-row {
+            background: #fafafa;
+            border: 1px solid #dbdbdb;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .pool-row .pool-row-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+        .slice-row {
+            background: #ffffff;
+            border: 1px solid #e5e5e5;
+            border-radius: 4px;
+            padding: 0.5rem 0.75rem;
+            margin-bottom: 0.4rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .slice-row .slice-label {
+            font-weight: 600;
+            min-width: 80px;
+            font-size: 0.9em;
+        }
+        .slice-row .slice-share {
+            width: 80px;
+        }
+        .advanced-section {
+            margin-top: 0.5rem;
+            padding: 0.75rem;
+            background: #f0f0f0;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .advanced-toggle {
+            cursor: pointer;
+            user-select: none;
+            color: #3273dc;
+            font-size: 0.9em;
+            margin-top: 0.5rem;
+            display: inline-block;
+        }
+
+        /* Funding rows */
+        .balance-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.4rem 0;
+            border-bottom: 1px dashed #e5e5e5;
+        }
+        .balance-row:last-child { border-bottom: none; }
+        .balance-row .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+            background: #b5b5b5;
+        }
+        .balance-row.met .status-dot { background: #48c774; }
+
+        /* Progress tree (during pool creation) */
+        .progress-pool { margin-bottom: 0.75rem; }
+        .progress-step {
+            display: flex;
+            align-items: center;
+            padding: 0.2rem 0;
+            font-family: monospace;
+            font-size: 0.85em;
+        }
+        .progress-step .icon { margin-right: 0.5rem; min-width: 20px; }
+        .progress-step.pending { color: #999; }
+        .progress-step.running { color: #3273dc; font-weight: 600; }
+        .progress-step.done { color: #48c774; }
+        .progress-step.failed { color: #ff3860; }
+
+        /* RPC settings (top of page) */
+        .rpc-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+        }
+        .rpc-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px dashed #e5e5e5;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .rpc-row:last-child { border-bottom: none; }
+        .rpc-row .rpc-info {
+            flex: 1;
+            min-width: 0;
+            word-break: break-all;
+        }
+        .rpc-row .rpc-actions {
+            display: flex;
+            gap: 0.25rem;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Hero -->
+    <section class="hero is-primary">
+        <div class="hero-body">
+            <div class="container">
+                <h1 class="title is-2">
+                    <i class="fas fa-rocket"></i> Trebuchet
+                </h1>
+                <p class="subtitle is-6">
+                    A barebones Solana token launcher. SPL token + Metaplex metadata, single-sided CLMM liquidity on Raydium, locked via Burn &amp; Earn. No frills, no extractive nonsense.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Sticky bar: status + cancel -->
+    <div id="stickyBar">
+        <div class="status-text">
+            <strong>Step <span id="stickyStepNum">1</span>:</strong>
+            <span id="stickyStepTitle">Generate Wallet</span>
+        </div>
+        <button class="button is-danger is-small" id="cancelBtn">
+            <span class="icon"><i class="fas fa-times"></i></span>
+            <span>Cancel &amp; Refund</span>
+        </button>
+    </div>
+
+    <section class="section pt-4">
+        <div class="container">
+
+            <!-- RPC Settings (collapsible, click to expand) -->
+            <div class="box mb-4 p-4">
+                <div class="rpc-header" id="rpcSettingsToggle">
+                    <div>
+                        <span class="icon"><i class="fas fa-server"></i></span>
+                        <strong>RPC:</strong>
+                        <span id="rpcCurrentDisplay" class="is-family-monospace is-size-7">loading...</span>
+                    </div>
+                    <span class="icon">
+                        <i class="fas fa-chevron-down" id="rpcSettingsChevron"></i>
+                    </span>
+                </div>
+
+                <div id="rpcSettingsPanel" class="hidden mt-3">
+                    <h6 class="subtitle is-6 mb-2">Saved Endpoints</h6>
+                    <div id="rpcSavedList"></div>
+                    <hr class="my-3">
+                    <h6 class="subtitle is-6 mb-2">Add a New RPC</h6>
+                    <div class="field">
+                        <label class="label is-small">Name</label>
+                        <input class="input is-small" type="text" id="newRpcName" placeholder="e.g. Helius mainnet">
+                    </div>
+                    <div class="field">
+                        <label class="label is-small">URL</label>
+                        <input class="input is-small" type="text" id="newRpcUrl" placeholder="https://...">
+                    </div>
+                    <div class="field is-grouped">
+                        <div class="control">
+                            <button class="button is-info is-small" id="testRpcBtn">
+                                <span class="icon"><i class="fas fa-stethoscope"></i></span>
+                                <span>Test connection</span>
+                            </button>
+                        </div>
+                        <div class="control">
+                            <button class="button is-primary is-small" id="addRpcBtn">
+                                <span class="icon"><i class="fas fa-plus"></i></span>
+                                <span>Add &amp; use</span>
+                            </button>
+                        </div>
+                    </div>
+                    <p id="rpcTestResult" class="help"></p>
+                </div>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- STEP 1: Generate Wallet                                       -->
+            <!-- ============================================================ -->
+            <div class="box step-card is-active p-0" id="step1-card" data-step="1">
+                <div class="step-header" data-step-toggle="1">
+                    <span class="step-num">1</span>
+                    <span class="step-title">Generate Temporary Wallet<span class="step-summary" id="step1-summary"></span></span>
+                    <span class="icon step-chevron"><i class="fas fa-chevron-down"></i></span>
+                </div>
+                <div class="step-body">
+                    <p class="mb-3">A fresh keypair will be generated to perform all on-chain actions. You'll fund it once, and at the end everything in the wallet (token supply remainders, SOL, and Fee Key NFTs) gets swept to your destination wallet.</p>
+                    <button class="button is-primary" id="generateWalletBtn">
+                        <span class="icon"><i class="fas fa-wallet"></i></span>
+                        <span>Generate Wallet</span>
+                    </button>
+
+                    <div id="walletInfo" class="hidden mt-4">
+                        <div class="columns is-vcentered">
+                            <div class="column is-narrow">
+                                <div class="qr-code">
+                                    <img id="qrCode" alt="Wallet QR Code" style="max-width: 160px; display: block;" />
+                                </div>
+                            </div>
+                            <div class="column">
+                                <div class="field">
+                                    <label class="label is-small">Wallet Address</label>
+                                    <div class="control">
+                                        <input class="input is-small is-family-monospace" type="text" id="walletAddress" readonly>
+                                    </div>
+                                </div>
+                                <button class="button is-warning is-small mt-2" id="showPrivateKeyBtn">
+                                    <span class="icon"><i class="fas fa-key"></i></span>
+                                    <span>Show Private Key</span>
+                                </button>
+                                <div id="privateKeyContainer" class="hidden mt-2">
+                                    <div class="notification is-warning is-light is-size-7 py-2 px-3">
+                                        <strong>Keep this safe.</strong> If anything goes wrong mid-flow, you'll need this to recover funds.
+                                    </div>
+                                    <div class="secret-key-container" id="privateKey"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- STEP 2: Token + Pool Configuration                            -->
+            <!-- ============================================================ -->
+            <div class="box step-card is-pending p-0" id="step2-card" data-step="2">
+                <div class="step-header" data-step-toggle="2">
+                    <span class="step-num">2</span>
+                    <span class="step-title">Token &amp; Pool Configuration<span class="step-summary" id="step2-summary"></span></span>
+                    <span class="icon step-chevron"><i class="fas fa-chevron-down"></i></span>
+                </div>
+                <div class="step-body">
+
+                    <h4 class="title is-6">Token Details</h4>
+                    <div class="columns">
+                        <div class="column">
+                            <div class="field">
+                                <label class="label is-small">Name</label>
+                                <input class="input is-small" type="text" id="tokenName" required placeholder="My Token">
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="field">
+                                <label class="label is-small">Symbol</label>
+                                <input class="input is-small" type="text" id="tokenSymbol" required maxlength="10" placeholder="MTK">
+                            </div>
+                        </div>
+                        <div class="column">
+                            <div class="field">
+                                <label class="label is-small">Total Supply</label>
+                                <input class="input is-small" type="number" id="tokenSupply" required value="1000000000">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label class="label is-small">Description</label>
+                        <textarea class="textarea is-small" id="tokenDescription" rows="2" placeholder="Brief description"></textarea>
+                    </div>
+
+                    <div class="field">
+                        <label class="label is-small">Logo (PNG/JPG, max 100KB)</label>
+                        <div class="file has-name is-small">
+                            <label class="file-label">
+                                <input class="file-input" type="file" id="tokenLogo" accept="image/*">
+                                <span class="file-cta">
+                                    <span class="file-icon"><i class="fas fa-upload"></i></span>
+                                    <span class="file-label">Choose file</span>
+                                </span>
+                                <span class="file-name" id="logoFileName">No file selected</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <hr class="my-3">
+
+                    <h4 class="title is-6">Pool Configuration</h4>
+
+                    <div class="field">
+                        <label class="label is-small">Target Launch Market Cap (USD)</label>
+                        <div class="control has-icons-left" style="max-width: 250px;">
+                            <input class="input is-small" type="number" id="targetMarketCap" required value="100000" min="1">
+                            <span class="icon is-small is-left"><i class="fas fa-dollar-sign"></i></span>
+                        </div>
+                        <p class="help">All pools start at the same USD-equivalent token price.</p>
+                    </div>
+
+                    <label class="label is-small">Pools to Create</label>
+                    <div id="poolList"></div>
+                    <button class="button is-light is-small" id="addPoolBtn">
+                        <span class="icon"><i class="fas fa-plus"></i></span>
+                        <span>Add another pool</span>
+                    </button>
+
+                    <div class="notification is-info is-light is-size-7 my-3 py-2 px-3" id="allocationSummary">
+                        <strong>Total allocated:</strong> <span id="totalAllocPct">0</span>% &nbsp;
+                        (<span id="unallocatedPct">100</span>% will remain in your wallet)
+                    </div>
+
+                    <div class="field">
+                        <label class="checkbox is-size-7">
+                            <input type="checkbox" id="lockPositions" checked>
+                            &nbsp;<strong>Lock liquidity (Burn &amp; Earn)</strong> — recommended; mints transferable Fee Key NFTs that earn fees forever.
+                        </label>
+                    </div>
+
+                    <div class="notification is-warning is-light is-size-7 py-2 px-3 hidden mt-3" id="continueReasons"></div>
+
+                    <button class="button is-primary mt-2" id="continueToFundingBtn" disabled>
+                        <span>Continue to Funding</span>
+                        <span class="icon"><i class="fas fa-arrow-right"></i></span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- STEP 3: Fund Wallet                                            -->
+            <!-- ============================================================ -->
+            <div class="box step-card is-pending p-0" id="step3-card" data-step="3">
+                <div class="step-header" data-step-toggle="3">
+                    <span class="step-num">3</span>
+                    <span class="step-title">Fund Wallet<span class="step-summary" id="step3-summary"></span></span>
+                    <span class="icon step-chevron"><i class="fas fa-chevron-down"></i></span>
+                </div>
+                <div class="step-body">
+                    <p class="mb-2 is-size-7">Send the following to your ephemeral wallet:</p>
+                    <p class="is-family-monospace is-size-7 mb-3" id="step3WalletAddr"></p>
+
+                    <div class="box p-3" id="fundingRequirements">
+                        <h5 class="subtitle is-6 mb-2">Required deposits</h5>
+                        <div id="balanceRows"></div>
+
+                        <details class="mt-2">
+                            <summary class="is-clickable is-size-7 has-text-link">Show cost breakdown</summary>
+                            <div id="fundingBreakdown" class="mt-2"></div>
+                        </details>
+                    </div>
+
+                    <div id="fundingWalletInfo" class="hidden mb-3">
+                        <div class="notification is-warning is-light is-size-7 py-2 px-3">
+                            <p><strong>Possible funding wallet:</strong> <span id="detectedFundingWallet" class="is-family-monospace"></span></p>
+                            <p class="mt-2">⚠️ This is a best-effort guess based on the wallet's transaction history. <strong>Verify the full address matches your real wallet before using it as a destination.</strong></p>
+                        </div>
+                    </div>
+
+                    <div class="field is-grouped">
+                        <div class="control">
+                            <button class="button is-info is-small" id="refreshBalanceBtn">
+                                <span class="icon"><i class="fas fa-sync"></i></span>
+                                <span>Refresh balances</span>
+                            </button>
+                        </div>
+                        <div class="control">
+                            <button class="button is-primary is-small" id="continueToTokenBtn" disabled>
+                                <span>Continue to Token Creation</span>
+                                <span class="icon"><i class="fas fa-arrow-right"></i></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- STEP 4: Create Token                                           -->
+            <!-- ============================================================ -->
+            <div class="box step-card is-pending p-0" id="step4-card" data-step="4">
+                <div class="step-header" data-step-toggle="4">
+                    <span class="step-num">4</span>
+                    <span class="step-title">Create Token<span class="step-summary" id="step4-summary"></span></span>
+                    <span class="icon step-chevron"><i class="fas fa-chevron-down"></i></span>
+                </div>
+                <div class="step-body">
+                    <p class="is-size-7 mb-3">Mints the SPL token with Metaplex metadata, transfers the supply to the ephemeral wallet, and renounces all authorities (mint, freeze, metadata-update).</p>
+                    <button class="button is-primary" id="createTokenBtn">
+                        <span class="icon"><i class="fas fa-coins"></i></span>
+                        <span>Create Token</span>
+                    </button>
+
+                    <div id="tokenCreatedInfo" class="hidden mt-3">
+                        <div class="notification is-success is-light is-size-7 py-2 px-3">
+                            <p><strong>Token created.</strong></p>
+                            <p>Mint address: <span class="is-family-monospace" id="tokenMintAddress"></span></p>
+                            <a href="#" id="tokenSolscanLink" target="_blank">View on Solscan</a>
+                        </div>
+                        <button class="button is-primary mt-2" id="continueToLpBtn">
+                            <span>Continue to Pool Creation</span>
+                            <span class="icon"><i class="fas fa-arrow-right"></i></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- STEP 5: Create Pools                                           -->
+            <!-- ============================================================ -->
+            <div class="box step-card is-pending p-0" id="step5-card" data-step="5">
+                <div class="step-header" data-step-toggle="5">
+                    <span class="step-num">5</span>
+                    <span class="step-title">Create Pools and Positions<span class="step-summary" id="step5-summary"></span></span>
+                    <span class="icon step-chevron"><i class="fas fa-chevron-down"></i></span>
+                </div>
+                <div class="step-body">
+                    <div id="lpSummary" class="content is-small mb-3"></div>
+
+                    <button class="button is-primary" id="createLpBtn">
+                        <span class="icon"><i class="fas fa-water"></i></span>
+                        <span>Create Pools</span>
+                    </button>
+
+                    <div id="lpProgress" class="mt-3 hidden">
+                        <h5 class="subtitle is-6 mb-2">Progress</h5>
+                        <div id="lpProgressTree"></div>
+                    </div>
+
+                    <div id="lpDoneInfo" class="hidden mt-3">
+                        <div class="notification is-success is-light is-size-7 py-2 px-3">
+                            <p><strong>All pools created.</strong></p>
+                            <p id="lpDoneSummary"></p>
+                        </div>
+                        <button class="button is-primary mt-2" id="continueToTransferBtn">
+                            <span>Continue to Final Transfer</span>
+                            <span class="icon"><i class="fas fa-arrow-right"></i></span>
+                        </button>
+                    </div>
+
+                    <div id="lpFailInfo" class="hidden mt-3">
+                        <div class="notification is-warning is-light is-size-7 py-2 px-3">
+                            <p><strong>Pool creation failed partway through.</strong></p>
+                            <p id="lpFailSummary"></p>
+                            <p class="mt-2">You can still transfer everything back to your destination wallet.</p>
+                        </div>
+                        <button class="button is-warning mt-2" id="continueToTransferAfterFailBtn">
+                            <span>Skip to Transfer Assets</span>
+                            <span class="icon"><i class="fas fa-arrow-right"></i></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- STEP 6: Transfer to Destination                                -->
+            <!-- ============================================================ -->
+            <div class="box step-card is-pending p-0" id="step6-card" data-step="6">
+                <div class="step-header" data-step-toggle="6">
+                    <span class="step-num">6</span>
+                    <span class="step-title">Transfer to Destination Wallet<span class="step-summary" id="step6-summary"></span></span>
+                    <span class="icon step-chevron"><i class="fas fa-chevron-down"></i></span>
+                </div>
+                <div class="step-body">
+                    <p class="is-size-7 mb-3">Sweeps everything still in the ephemeral wallet — leftover launched tokens, SOL, and any Fee Key NFTs (from locked positions) — to your destination wallet.</p>
+
+                    <div class="field">
+                        <label class="label is-small">Destination Wallet</label>
+                        <input class="input is-small is-family-monospace" type="text" id="destinationWallet" placeholder="Your real Solana wallet address">
+                        <p class="help">Paste the full address. Don't rely on prefix/suffix matches.</p>
+                    </div>
+
+                    <button class="button is-primary" id="transferAssetsBtn">
+                        <span class="icon"><i class="fas fa-paper-plane"></i></span>
+                        <span>Transfer Assets</span>
+                    </button>
+
+                    <div id="transferResult" class="hidden mt-3">
+                        <div class="notification is-success is-light is-size-7 py-2 px-3">
+                            <p><strong>Done!</strong></p>
+                            <p>Tokens transferred: <span id="tokensTransferred"></span></p>
+                            <p>SOL transferred: <span id="solTransferred"></span></p>
+                            <p>NFTs transferred: <span id="nftsTransferred"></span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- Activity log (docked at bottom, click to expand)              -->
+    <!-- ============================================================ -->
+    <div id="activityLogContainer">
+        <div id="activityLogHeader">
+            <span><i class="fas fa-terminal"></i> &nbsp; Activity Log</span>
+            <span><i class="fas fa-chevron-up" id="activityLogChevron"></i></span>
+        </div>
+        <div id="activityLog">
+            <div class="log-entry info">
+                <span class="timestamp">[00:00:00]</span>
+                <span>Application ready.</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Transfer Confirmation Modal                                    -->
+    <!-- ============================================================ -->
+    <div class="modal" id="transferConfirmModal">
+        <div class="modal-background"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title" id="transferConfirmTitle">Confirm Destination Address</p>
+            </header>
+            <section class="modal-card-body">
+                <p class="mb-3" id="transferConfirmIntro">
+                    <strong>You are about to transfer ALL remaining tokens, SOL, and Fee Key NFTs to:</strong>
+                </p>
+                <div class="notification is-warning is-light">
+                    <p class="is-family-monospace has-text-weight-bold" id="transferConfirmAddress" style="word-break: break-all; font-size: 1.05em; line-height: 1.6;"></p>
+                </div>
+                <div class="content is-size-7">
+                    <p><strong>Verify EVERY character above against your real wallet.</strong></p>
+                    <p>Once submitted, this transfer cannot be reversed. Solana addresses can look similar by coincidence — don't just spot-check the prefix.</p>
+                </div>
+                <label class="checkbox">
+                    <input type="checkbox" id="transferConfirmCheckbox">
+                    &nbsp;<strong>I have verified the full address.</strong>
+                </label>
+            </section>
+            <footer class="modal-card-foot">
+                <button class="button" id="transferConfirmCancelBtn">Cancel</button>
+                <button class="button is-primary" id="transferConfirmBtn" disabled>
+                    <span class="icon"><i class="fas fa-paper-plane"></i></span>
+                    <span>Confirm and Transfer</span>
+                </button>
+            </footer>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Cancel Confirmation Modal                                      -->
+    <!-- ============================================================ -->
+    <div class="modal" id="cancelConfirmModal">
+        <div class="modal-background"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title">Cancel and Refund?</p>
+            </header>
+            <section class="modal-card-body">
+                <p class="mb-3" id="cancelConfirmIntro"></p>
+
+                <div class="field" id="cancelDestSection">
+                    <label class="label is-small">Refund destination</label>
+                    <input class="input is-small is-family-monospace" type="text" id="cancelDestInput" placeholder="Wallet address to receive refund">
+                    <p class="help" id="cancelDestHelp"></p>
+                </div>
+
+                <div class="content is-size-7 mt-3">
+                    <p>This will sweep everything currently in the ephemeral wallet to that destination, then end the launch. Anything created on-chain so far (e.g., the SPL token if step 4 completed, or any pools created in step 5) stays on-chain — only the wallet's contents move.</p>
+                </div>
+            </section>
+            <footer class="modal-card-foot">
+                <button class="button" id="cancelConfirmDismissBtn">Keep Going</button>
+                <button class="button is-danger" id="cancelConfirmProceedBtn" disabled>
+                    <span class="icon"><i class="fas fa-times"></i></span>
+                    <span>Cancel and Refund</span>
+                </button>
+            </footer>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
