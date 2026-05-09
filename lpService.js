@@ -119,24 +119,38 @@ const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 // Convenience map for well-known quote tokens. The caller can pass any SPL
 // mint as a quote — this is just to skip on-chain decimals lookup for common
 // cases and to provide a friendly default symbol.
+//
+// imageUrl/name are pulled from the canonical Solana token list on GitHub.
+// These three tokens are stable enough that hardcoding is safer than
+// adding a Gecko round-trip for them on every launch — and the URLs have
+// been served from the same path for years.
 export const KNOWN_QUOTES = {
   SOL: {
     address: WSOL_MINT,
     programId: TOKEN_PROGRAM_ID.toBase58(),
     decimals: 9,
     symbol: 'SOL',
+    name: 'Solana',
+    imageUrl:
+      'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
   },
   USDC: {
     address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     programId: TOKEN_PROGRAM_ID.toBase58(),
     decimals: 6,
     symbol: 'USDC',
+    name: 'USD Coin',
+    imageUrl:
+      'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
   },
   USDT: {
     address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
     programId: TOKEN_PROGRAM_ID.toBase58(),
     decimals: 6,
     symbol: 'USDT',
+    name: 'USDT',
+    imageUrl:
+      'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg',
   },
 };
 

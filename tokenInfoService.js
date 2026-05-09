@@ -101,21 +101,52 @@ function readCache(mint) {
   if (!e) return null;
   const now = Date.now();
   return {
-    symbol:    now < e.staticExpiresAt ? e.symbol    : undefined,
-    decimals:  now < e.staticExpiresAt ? e.decimals  : undefined,
-    programId: now < e.staticExpiresAt ? e.programId : undefined,
-    priceUsd:  now < e.priceExpiresAt  ? e.priceUsd  : undefined,
+    symbol:    now < e.staticExpiresAt  ? e.symbol    : undefined,
+    decimals:  now < e.staticExpiresAt  ? e.decimals  : undefined,
+    programId: now < e.staticExpiresAt  ? e.programId : undefined,
+    // On-chain Metaplex name and uri — same TTL as the rest of the static
+    // fields since they all come from the same metadata account read.
+    name:      now < e.staticExpiresAt  ? e.onChainName : undefined,
+    uri:       now < e.staticExpiresAt  ? e.onChainUri  : undefined,
+    // Display meta (imageUrl, friendlyName) shares a separate TTL slot
+    // since it's populated lazily after possibly multiple network calls
+    // (Metaplex URI fetch, Gecko /info, DexScreener) — we don't want to
+    // re-trigger that whole chain on every getTokenInfo call.
+    imageUrl:      now < e.displayExpiresAt ? e.imageUrl     : undefined,
+    friendlyName:  now < e.displayExpiresAt ? e.friendlyName : undefined,
+    priceUsd:      now < e.priceExpiresAt   ? e.priceUsd     : undefined,
   };
 }
 
-function writeCacheStatic(mint, { symbol, decimals, programId }) {
+function writeCacheStatic(mint, { symbol, decimals, programId, name, uri }) {
   const existing = cache.get(mint) || {};
   cache.set(mint, {
     ...existing,
     symbol,
     decimals,
     programId,
+    onChainName: name ?? null,
+    onChainUri: uri ?? null,
     staticExpiresAt: Date.now() + STATIC_TTL_MS,
+  });
+  trimCache();
+}
+
+// Cache display metadata (logo URL, friendly name) sourced from external
+// indexers (GeckoTerminal, DexScreener) or the off-chain Metaplex JSON.
+// Same TTL as static fields. Either field may be null — we cache the
+// negative result too so we don't keep retrying for tokens that just
+// don't have an image anywhere.
+//
+// Stored under separate keys (friendlyName / imageUrl) to avoid colliding
+// with the on-chain name/uri tracked by writeCacheStatic.
+function writeCacheDisplayMeta(mint, { imageUrl, name }) {
+  const existing = cache.get(mint) || {};
+  cache.set(mint, {
+    ...existing,
+    imageUrl: imageUrl ?? null,
+    friendlyName: name ?? null,
+    displayExpiresAt: Date.now() + STATIC_TTL_MS,
   });
   trimCache();
 }
@@ -180,10 +211,18 @@ async function readOnChainBasics(mintAddress) {
   // Metaplex metadata is optional. Most well-known tokens have it; some
   // very-low-effort or programmatically-minted ones don't. When it's
   // missing we'll fall back to a truncated mint as the display symbol.
+  // We pull name and uri out of the same data — both are free since the
+  // metadata account is already loaded. The uri points to an off-chain
+  // JSON document with the canonical logo URL (see fetchDisplayMeta-
+  // FromMetaplexUri).
   let symbol = null;
+  let name = null;
+  let uri = null;
   if (metadataInfo) {
     try {
       symbol = parseMetaplexSymbol(metadataInfo.data);
+      name = parseMetaplexName(metadataInfo.data);
+      uri = parseMetaplexUri(metadataInfo.data);
     } catch (e) {
       console.warn(
         `tokenInfoService: failed to parse Metaplex metadata for ${mintAddress}: ${e.message}`,
@@ -194,6 +233,8 @@ async function readOnChainBasics(mintAddress) {
   return {
     decimals: mintData.decimals,
     symbol,
+    name,
+    uri,
     programId: programIdPk.toBase58(),
   };
 }
@@ -227,6 +268,43 @@ function parseMetaplexSymbol(data) {
   return text || null;
 }
 
+// Same idea as parseMetaplexSymbol but for the name field — sits
+// immediately after the 4-byte name-length prefix, fixed 32-byte
+// allocation. Used as a fallback display name when no external
+// indexer (Gecko/DexScreener) has the token.
+function parseMetaplexName(data) {
+  if (!data || data.length < 1 + 32 + 32 + 4 + 32) {
+    return null;
+  }
+  const NAME_OFFSET = 1 + 32 + 32 + 4;
+  const NAME_MAX_LEN = 32;
+  const raw = data.slice(NAME_OFFSET, NAME_OFFSET + NAME_MAX_LEN);
+  const text = Buffer.from(raw).toString('utf8').replace(/\0+$/, '').trim();
+  return text || null;
+}
+
+// Same idea again, but for the uri field which sits immediately after
+// the symbol field. The uri points to an off-chain JSON document
+// (typically Arweave or IPFS) following the Metaplex schema:
+//   { name, symbol, description, image, ... }
+//
+// We use this as the primary logo source — the token creator declared
+// it canonical when minting, so it's more authoritative than what an
+// indexer (Gecko / DexScreener) might curate later.
+//
+// Layout offset: 1 + 32 + 32 + 4 + 32 + 4 + 10 + 4 = 119 bytes.
+// Fixed allocation: 200 bytes (Metaplex spec).
+function parseMetaplexUri(data) {
+  if (!data || data.length < 1 + 32 + 32 + 4 + 32 + 4 + 10 + 4 + 200) {
+    return null;
+  }
+  const URI_OFFSET = 1 + 32 + 32 + 4 + 32 + 4 + 10 + 4;
+  const URI_MAX_LEN = 200;
+  const raw = data.slice(URI_OFFSET, URI_OFFSET + URI_MAX_LEN);
+  const text = Buffer.from(raw).toString('utf8').replace(/\0+$/, '').trim();
+  return text || null;
+}
+
 // ---------------------------------------------------------------------------
 // Price lookup
 // ---------------------------------------------------------------------------
@@ -246,7 +324,9 @@ function parseMetaplexSymbol(data) {
 // directly. Picking the first pool gives us the price Gecko's own UI
 // would display.
 async function fetchPriceFromGecko(mintAddress) {
-  // Step 1: direct token endpoint
+  // Step 1: direct token endpoint. Returns price + name + symbol but
+  // NOT image_url — that's on the separate /tokens/{addr}/info endpoint
+  // (see fetchDisplayMetaFromGecko) which getTokenInfo handles.
   try {
     const resp = await fetch(`${GECKO_BASE}/tokens/${mintAddress}`, {
       headers: { Accept: 'application/json' },
@@ -378,6 +458,7 @@ async function fetchPriceFromDexScreener(mintAddress) {
     const json = await resp.json();
     // The response is the array directly (not wrapped in a {data} object).
     const pairs = Array.isArray(json) ? json : [];
+
     for (const pair of pairs) {
       // Prefer a pair where the requested mint is the base token; that
       // gives us the price of the token directly. If only quote-side
@@ -398,6 +479,159 @@ async function fetchPriceFromDexScreener(mintAddress) {
     return null;
   } catch (e) {
     console.warn(`tokenInfoService: DexScreener error for ${mintAddress}:`, e.message);
+    return null;
+  }
+}
+
+// Resolve the off-chain Metaplex metadata document for a token and pull
+// its `image` field. The on-chain Metaplex account stores a `uri` that
+// points at a JSON blob (Arweave, IPFS, or sometimes a centralized URL)
+// following the standard schema:
+//
+//   { name, symbol, description, image, properties: {...}, ... }
+//
+// The `image` field is what the token creator declared as the canonical
+// logo, so we treat it as more authoritative than what an indexer might
+// have chosen later.
+//
+// Returns { imageUrl, name } or null. The name is taken from the off-chain
+// JSON too — it's typically the same as the on-chain name but may be
+// longer (the on-chain name is capped at 32 bytes).
+//
+// Failure modes that all return null cleanly:
+//   - URI is empty or malformed
+//   - Fetch times out (5s) or fails
+//   - Response is not valid JSON
+//   - JSON has no usable `image` field
+async function fetchDisplayMetaFromMetaplexUri(uri) {
+  if (!uri) return null;
+
+  // Normalize the URI scheme. Most tokens use https://arweave.net/...
+  // directly; some use ipfs://CID, which the browser/Node fetch can't
+  // resolve. Rewrite IPFS to a public gateway so we don't have to teach
+  // every client about IPFS.
+  let url = uri.trim();
+  if (url.startsWith('ipfs://')) {
+    url = `https://ipfs.io/ipfs/${url.slice('ipfs://'.length)}`;
+  }
+  // Reject anything that didn't end up looking like an http(s) URL.
+  // Tokens with bogus uri fields (typos, internal-only schemes) shouldn't
+  // produce errors, just a clean null.
+  if (!/^https?:\/\//i.test(url)) return null;
+
+  // 5-second cap so a slow/down Arweave gateway doesn't block resolution.
+  // The /info and DexScreener fallbacks are still cheap to try after.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const resp = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      console.warn(
+        `tokenInfoService: Metaplex URI HTTP ${resp.status} for ${url}`,
+      );
+      return null;
+    }
+    const json = await resp.json();
+    // Must be a plain object — defensive against URIs that point at
+    // arrays, strings, or null (yes, real tokens have shipped each of
+    // these by mistake).
+    if (!json || typeof json !== 'object' || Array.isArray(json)) {
+      return null;
+    }
+    const imageUrl = typeof json.image === 'string' && json.image.trim()
+      ? json.image.trim()
+      : null;
+    const name = typeof json.name === 'string' && json.name.trim()
+      ? json.name.trim()
+      : null;
+    if (!imageUrl && !name) return null;
+    return { imageUrl, name };
+  } catch (e) {
+    // AbortError is the timeout case; everything else is network or
+    // JSON-parse error. We treat all the same — fall through to indexers.
+    if (e.name !== 'AbortError') {
+      console.warn(`tokenInfoService: Metaplex URI fetch error for ${url}:`, e.message);
+    } else {
+      console.warn(`tokenInfoService: Metaplex URI timeout for ${url}`);
+    }
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// Dedicated DexScreener call solely for display meta (image + name).
+// Used as a fallback in getTokenInfo when the price chain succeeded via
+// Gecko or Jupiter but we never got an image_url out of the responses
+// — DexScreener's curated `info.imageUrl` covers tokens that Gecko
+// indexes without artwork. Same network shape as fetchPriceFromDexScreener
+// but ignores price.
+async function fetchDisplayMetaFromDexScreener(mintAddress) {
+  try {
+    const resp = await fetch(`${DEXSCREENER_BASE}/${mintAddress}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!resp.ok) {
+      if (resp.status >= 500 || resp.status === 429) {
+        console.warn(
+          `tokenInfoService: DexScreener (display) HTTP ${resp.status} for ${mintAddress}`,
+        );
+      }
+      return null;
+    }
+    const json = await resp.json();
+    const pairs = Array.isArray(json) ? json : [];
+    for (const pair of pairs) {
+      if (pair?.baseToken?.address === mintAddress) {
+        const imageUrl = pair.info?.imageUrl || null;
+        const name = pair.baseToken?.name || null;
+        if (imageUrl || name) return { imageUrl, name };
+        break;
+      }
+    }
+    return null;
+  } catch (e) {
+    console.warn(`tokenInfoService: DexScreener (display) error for ${mintAddress}:`, e.message);
+    return null;
+  }
+}
+
+// Dedicated GeckoTerminal call for display meta (image + name).
+//
+// Important: image_url is NOT on the basic /tokens/{addr} endpoint that
+// fetchPriceFromGecko uses — it's only on /tokens/{addr}/info. The basic
+// endpoint returns price + name + symbol; the /info endpoint is a
+// separate "token profile" doc with image + description + socials.
+//
+// We hit this lazily from getTokenInfo only when the price chain didn't
+// already populate an image — same pattern as the DexScreener fallback.
+// Returns {imageUrl, name} or null.
+async function fetchDisplayMetaFromGecko(mintAddress) {
+  try {
+    const resp = await fetch(`${GECKO_BASE}/tokens/${mintAddress}/info`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!resp.ok) {
+      if (resp.status >= 500 || resp.status === 429) {
+        console.warn(
+          `tokenInfoService: GeckoTerminal /info HTTP ${resp.status} for ${mintAddress}`,
+        );
+      }
+      return null;
+    }
+    const json = await resp.json();
+    const attrs = json?.data?.attributes;
+    if (!attrs) return null;
+    const imageUrl = attrs.image_url || null;
+    const name = attrs.name || null;
+    if (!imageUrl && !name) return null;
+    return { imageUrl, name };
+  } catch (e) {
+    console.warn(`tokenInfoService: GeckoTerminal /info error for ${mintAddress}:`, e.message);
     return null;
   }
 }
@@ -448,18 +682,25 @@ async function resolvePriceUsd(mintAddress) {
  *     decimals:  number
  *     priceUsd:  Decimal | null   // null = no source could provide a price
  *     programId: string (base58)  // either classic SPL or Token-2022
- *     name:      string | null    // future use; null today
+ *     name:      string | null    // friendly name from Gecko, on-chain
+ *                                 // Metaplex, or null if neither has one
+ *     imageUrl:  string | null    // logo URL from Gecko or DexScreener,
+ *                                 // null if no indexer has the token
  *   }
  *
  * Throws only on hard failures (mint doesn't exist on-chain, RPC down,
- * Token-2022 not handled, etc.). A missing price is NOT a hard failure —
- * the caller surfaces it as "enter manually" in the UI.
+ * Token-2022 not handled, etc.). A missing price/name/image is NOT a
+ * hard failure — the caller surfaces it as "enter manually" in the UI.
  */
 export async function getTokenInfo(mintAddress) {
   const cached = readCache(mintAddress);
 
   // Static fields: read on-chain only when we don't have them in cache.
-  let symbol, decimals, programId;
+  // We track the on-chain Metaplex name and uri here as inputs to display
+  // meta resolution — both are free since the metadata account is already
+  // loaded. The uri is the canonical pointer to the off-chain JSON doc
+  // that holds the logo URL (see fetchDisplayMetaFromMetaplexUri).
+  let symbol, decimals, programId, onChainName, onChainUri;
   if (
     cached?.symbol !== undefined &&
     cached?.decimals !== undefined &&
@@ -468,12 +709,22 @@ export async function getTokenInfo(mintAddress) {
     symbol = cached.symbol;
     decimals = cached.decimals;
     programId = cached.programId;
+    onChainName = cached.name ?? null;
+    onChainUri = cached.uri ?? null;
   } else {
     const onChain = await readOnChainBasics(mintAddress);
     symbol = onChain.symbol;
     decimals = onChain.decimals;
     programId = onChain.programId;
-    writeCacheStatic(mintAddress, { symbol, decimals, programId });
+    onChainName = onChain.name;
+    onChainUri = onChain.uri;
+    writeCacheStatic(mintAddress, {
+      symbol,
+      decimals,
+      programId,
+      name: onChainName,
+      uri: onChainUri,
+    });
   }
 
   // Symbol fallback: if Metaplex metadata is missing, show a truncated
@@ -484,12 +735,78 @@ export async function getTokenInfo(mintAddress) {
   // Price: separate cache & TTL.
   const priceUsd = await resolvePriceUsd(mintAddress);
 
+  // Display meta (image + name) — composed from sources in descending
+  // priority:
+  //   1. Off-chain Metaplex JSON pointed to by the on-chain `uri` field.
+  //      This is what the token creator declared canonical, so it's the
+  //      most authoritative source for both image and name. Hosted on
+  //      Arweave, IPFS, or sometimes a custom domain.
+  //   2. GeckoTerminal /tokens/{addr}/info — the dedicated token profile
+  //      endpoint. Useful for tokens where Metaplex metadata is missing,
+  //      empty, or uses a dead gateway.
+  //   3. DexScreener /tokens/v1/solana/{addr} — covers long-tail tokens
+  //      that Gecko hasn't profiled yet.
+  //   4. On-chain Metaplex `name` field (image stays null) — last-resort
+  //      fallback for the friendly name.
+  //
+  // We avoid re-fetching when the display-meta cache slot is set — even
+  // with null values. The cache entry's displayExpiresAt being set (vs
+  // undefined) is the signal that a previous getTokenInfo call already
+  // exhausted the resolution chain for this mint. Without this guard
+  // we'd re-hit the metadata gateway, /info, and DexScreener every
+  // single call for tokens that have no logo anywhere.
+  const cacheEntry = cache.get(mintAddress);
+  const alreadyResolved = cacheEntry && cacheEntry.displayExpiresAt
+    && Date.now() < cacheEntry.displayExpiresAt;
+
+  let imageUrl = cacheEntry?.imageUrl ?? null;
+  let name = cacheEntry?.friendlyName ?? null;
+
+  if (!alreadyResolved) {
+    // Step 1: Metaplex URI. Most reliable when present and reachable;
+    // skipped when the on-chain account has no uri at all.
+    if (imageUrl == null && onChainUri) {
+      const meta = await fetchDisplayMetaFromMetaplexUri(onChainUri);
+      if (meta) {
+        imageUrl = meta.imageUrl ?? imageUrl;
+        name = name ?? meta.name ?? null;
+      }
+    }
+    // Step 2: Gecko /info. Catches tokens with empty/dead Metaplex URIs.
+    if (imageUrl == null) {
+      const gecko = await fetchDisplayMetaFromGecko(mintAddress);
+      if (gecko) {
+        imageUrl = gecko.imageUrl ?? imageUrl;
+        name = name ?? gecko.name ?? null;
+      }
+    }
+    // Step 3: DexScreener fallback.
+    if (imageUrl == null) {
+      const ds = await fetchDisplayMetaFromDexScreener(mintAddress);
+      if (ds) {
+        imageUrl = ds.imageUrl ?? imageUrl;
+        name = name ?? ds.name ?? null;
+      }
+    }
+    // Cache whatever we ended up with — including null. Future calls
+    // for the same mint within the TTL will short-circuit.
+    writeCacheDisplayMeta(mintAddress, { imageUrl, name });
+  }
+
+  // Final fallback for name only — if no source had one, use whatever
+  // Metaplex put on-chain. Kept separate from the indexer-meta cache so
+  // it doesn't lock in the on-chain name as the friendly name forever.
+  if (name == null && onChainName) {
+    name = onChainName;
+  }
+
   return {
     symbol: displaySymbol,
     decimals,
     priceUsd,
     programId,
-    name: null,
+    name,
+    imageUrl,
   };
 }
 
@@ -505,7 +822,8 @@ export async function getUsdPrice(mintAddress) {
 /**
  * Backwards-compatible export with the same shape lpService used to
  * provide. Existing callers (server.js /api/quote-token-info) keep
- * working unchanged.
+ * working unchanged. Now also exposes name and imageUrl, which existing
+ * callers ignore (they cherry-pick fields).
  */
 export async function getTokenMetadata(mintAddress) {
   try {
@@ -515,6 +833,7 @@ export async function getTokenMetadata(mintAddress) {
       decimals: info.decimals,
       priceUsd: info.priceUsd,
       name: info.name,
+      imageUrl: info.imageUrl,
     };
   } catch (e) {
     console.warn(`tokenInfoService: getTokenMetadata failed for ${mintAddress}:`, e.message);

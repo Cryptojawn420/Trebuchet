@@ -72,7 +72,8 @@
     ],
 
     "asarUnpack": [
-      "public/**"
+      "public/**/*",
+      "public/intro.mp4"
     ],
 
     "mac": {
@@ -83,6 +84,10 @@
     "win": {
       "icon": "build/icon.ico",
       "target": ["nsis", "portable"]
+    },
+
+    "nsis": {
+      "preCompressedFileExtensions": []
     },
 
     "portable": {

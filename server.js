@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
@@ -60,15 +61,87 @@ const upload = multer({
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
-// Use __dirname-relative path so static file serving works regardless of
-// the current working directory. This matters when the package is run
-// from another directory (e.g. when consumed as a dependency by an
-// Electron wrapper, where cwd points at the wrapper, not at trebuchet).
-app.use(express.static(path.join(__dirname, 'public')));
+
+// Resolve the public/ directory's path on disk. Two cases:
+//
+//   - Dev / web mode: __dirname is just the source directory. The
+//     join below produces a regular filesystem path.
+//
+//   - Packaged Electron: server.js is bundled inside resources/app.asar.
+//     fs operations against asar-internal paths get redirected to
+//     app.asar.unpacked when the file is in our asarUnpack allow-list,
+//     but Express's static middleware uses fs.createReadStream for
+//     streaming and that doesn't reliably get the redirect — files
+//     served via streaming would 404 even though stat says they exist.
+//     Fix: rewrite the path to point at app.asar.unpacked directly.
+//     The detection finds "\app.asar" (or "/app.asar" on Unix) and
+//     verifies what follows is end-of-string or another separator
+//     (so we don't false-match a hypothetical "app.asarx" component).
+function resolvePublicDir() {
+  const marker = `${path.sep}app.asar`;
+  const idx = __dirname.indexOf(marker);
+  if (idx === -1) {
+    return path.join(__dirname, 'public');
+  }
+  const after = __dirname[idx + marker.length];
+  if (after !== undefined && after !== path.sep) {
+    return path.join(__dirname, 'public');
+  }
+  const rewritten =
+    __dirname.slice(0, idx) +
+    `${path.sep}app.asar.unpacked` +
+    __dirname.slice(idx + marker.length);
+  return path.join(rewritten, 'public');
+}
+const publicDir = resolvePublicDir();
+
+app.use(express.static(publicDir));
 
 // Routes
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(publicDir, 'index.html'));
+});
+
+// Diagnostic endpoint for the splash-video 404 problem. Reports what
+// server.js sees on disk: the resolved public/ path, whether it exists,
+// what's inside it, and whether intro.mp4 specifically is readable.
+// Useful for narrowing down whether a 404 on /intro.mp4 is "server
+// can't find the file" vs "file exists but isn't being served for
+// some other reason." Hit this from DevTools:
+//
+//   fetch('/api/_splash-debug').then(r => r.json()).then(console.log)
+//
+// Safe to ship — only reads its own directory, no user data exposed.
+app.get('/api/_splash-debug', (_req, res) => {
+  const introPath = path.join(publicDir, 'intro.mp4');
+  let publicListing = null;
+  let publicListingError = null;
+  try {
+    publicListing = fs.readdirSync(publicDir);
+  } catch (e) {
+    publicListingError = e.message;
+  }
+  let introStat = null;
+  let introStatError = null;
+  try {
+    const s = fs.statSync(introPath);
+    introStat = { size: s.size, isFile: s.isFile(), mtime: s.mtime };
+  } catch (e) {
+    introStatError = e.message;
+  }
+  res.json({
+    __dirname,
+    publicDir,
+    publicDirExists: fs.existsSync(publicDir),
+    publicListing,
+    publicListingError,
+    introPath,
+    introExists: fs.existsSync(introPath),
+    introStat,
+    introStatError,
+    cwd: process.cwd(),
+    execPath: process.execPath,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -270,7 +343,8 @@ app.post('/api/quote-token-info', async (req, res) => {
 
     const upper = quoteToken.toUpperCase();
     if (KNOWN_QUOTES[upper]) {
-      // Known token — use built-in constants for symbol/decimals/programId,
+      // Known token — use built-in constants for symbol/decimals/programId
+      // (and imageUrl/name, which we hardcode for the well-known three),
       // and only hit external indexers for the live price.
       const info = { ...KNOWN_QUOTES[upper] };
       const priceUsd = await getUsdPrice(info.address);
@@ -286,6 +360,8 @@ app.post('/api/quote-token-info', async (req, res) => {
     // first then Jupiter as a price fallback. priceUsd may still come
     // back null if both indexers fail; the frontend handles that by
     // surfacing the Advanced overrides as the recommended next step.
+    // imageUrl/name come from Gecko or DexScreener and may also be null
+    // for tokens neither indexer has — the frontend just hides the logo.
     const meta = await getTokenMetadata(quoteToken);
     if (meta && meta.decimals != null) {
       res.json({
@@ -295,6 +371,8 @@ app.post('/api/quote-token-info', async (req, res) => {
           symbol: meta.symbol,
           decimals: meta.decimals,
           priceUsd: meta.priceUsd ? meta.priceUsd.toString() : null,
+          name: meta.name ?? null,
+          imageUrl: meta.imageUrl ?? null,
         },
       });
       return;
@@ -310,6 +388,8 @@ app.post('/api/quote-token-info', async (req, res) => {
         symbol: quoteToken.slice(0, 4) + '…',
         decimals: null,
         priceUsd: null,
+        name: null,
+        imageUrl: null,
       },
     });
   } catch (error) {

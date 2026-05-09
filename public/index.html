@@ -8,6 +8,95 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         /* ========================================================
+           Splash screen — plays intro.mp4 on load, auto-dismisses.
+           ======================================================== */
+        .splash-screen {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            background: #0a0a0a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: opacity 0.4s ease;
+        }
+        .splash-screen.is-dismissing {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .splash-video {
+            width: 100%;
+            height: 100%;
+            display: block;
+            background: #000;
+            object-fit: contain;
+        }
+        .splash-skip {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            opacity: 0.85;
+        }
+        .splash-skip:hover {
+            opacity: 1;
+        }
+        /*
+            While the splash is up, prevent body scroll so the page
+            underneath doesn't peek through if the video is shorter
+            than the viewport. JS adds/removes this class.
+        */
+        body.has-splash {
+            overflow: hidden;
+        }
+
+        /* ========================================================
+           First-run disclaimer modal — layered on top of the splash.
+           ======================================================== */
+        .disclaimer-modal {
+            /* Above the splash (z-index 10000) so the disclaimer is
+               always the topmost UI element when both are showing. */
+            z-index: 10001 !important;
+        }
+        .disclaimer-modal .modal-card {
+            max-width: 640px;
+            max-height: calc(100vh - 80px);
+        }
+        .disclaimer-modal .modal-card-body {
+            line-height: 1.55;
+        }
+        .disclaimer-modal .title.is-6 {
+            margin-top: 0.25rem;
+            color: #2c3e50;
+        }
+        .disclaimer-list {
+            list-style: disc;
+            padding-left: 1.4rem;
+        }
+        .disclaimer-list li {
+            margin-bottom: 0.5rem;
+        }
+        .disclaimer-list li:last-child {
+            margin-bottom: 0;
+        }
+        .disclaimer-agree-field {
+            background: #f5f7fa;
+            border-radius: 4px;
+            padding: 0.75rem 1rem;
+            margin-top: 1rem;
+            margin-bottom: 0;
+        }
+        /*
+            Scroll fallback message for npm run web mode when the user
+            declines and we can't actually close the window. Replaces
+            the modal contents in-place.
+        */
+        .disclaimer-declined {
+            text-align: center;
+            padding: 2rem 1rem;
+            color: #555;
+        }
+        /* ========================================================
            Layout & visual style
            ======================================================== */
         .hero {
@@ -268,20 +357,149 @@
         }
         .hidden { display: none; }
 
-        /* Pool config */
+        /*
+            Simple config — the default pool-configuration UI for
+            non-technical users. Two rows: (1) flywheel toggle + dropdown
+            + allocation slider, and (2) split-LP toggle + position-count
+            slider. Each row has its own help text below it. At the
+            bottom, a "Customize" button switches to the full per-pool
+            editor. Most launches stay in this view and never see the
+            pool list at all.
+        */
+        #simpleConfigContainer {
+            margin-bottom: 1rem;
+        }
+        .simple-config-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            padding: 0.75rem 1rem;
+            background: #fafafa;
+            border: 1px solid #dbdbdb;
+            border-radius: 6px;
+        }
+        .simple-config-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            user-select: none;
+            margin: 0;
+        }
+        .simple-config-toggle input[type="checkbox"] {
+            margin: 0;
+        }
+        .simple-config-dropdown[disabled] {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        .simple-config-slider {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            min-width: 0;
+        }
+        .simple-config-slider[disabled] {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        .simple-config-slider input[type="range"] {
+            width: 140px;
+        }
+        .simple-config-slider-value {
+            font-size: 0.85em;
+            color: #4a4a4a;
+            font-variant-numeric: tabular-nums;
+            min-width: 2.5em;
+            text-align: right;
+        }
+        .simple-config-help-text {
+            font-size: 0.85em;
+            color: #6b6b6b;
+            margin: 0.5rem 0 0.75rem;
+        }
+        .simple-config-customize-row {
+            margin-top: 0.75rem;
+        }
+
+        /*
+            Pool config.
+
+            Two-zone layout: an interactive header strip (always visible)
+            and a body that's hidden when the pool is collapsed. The
+            outer .pool-row has no padding — its children handle their
+            own. This way a collapsed pool renders cleanly as just the
+            header strip with no leftover whitespace below.
+        */
         .pool-row {
             background: #fafafa;
             border: 1px solid #dbdbdb;
             border-radius: 6px;
-            padding: 1rem;
             margin-bottom: 1rem;
+            overflow: hidden;
         }
         .pool-row .pool-row-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 0.75rem;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            user-select: none;
         }
+        .pool-row .pool-row-header:hover {
+            background: #f5f5f5;
+        }
+        .pool-row .pool-row-header-left {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            min-width: 0;
+            flex: 1;
+        }
+        .pool-row .pool-row-header-right {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-shrink: 0;
+        }
+        .pool-row-logo {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: #fff;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+        .pool-row-logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .pool-row-logo.pool-row-logo-fallback {
+            background: #e8e8e8;
+            color: #555;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .pool-row-affordance {
+            font-size: 0.78rem;
+            color: #999;
+            user-select: none;
+        }
+        .pool-row-affordance.pool-row-affordance-warn {
+            color: #cc8800;
+            font-weight: 500;
+        }
+        .pool-row .pool-row-body {
+            padding: 0.25rem 1rem 1rem;
+            border-top: 1px solid #ececec;
+        }
+
         .slice-row {
             background: #ffffff;
             border: 1px solid #e5e5e5;
@@ -301,6 +519,50 @@
         .slice-row .slice-share {
             width: 80px;
         }
+
+        /*
+            The narrowed allocation column. Bulma's `is-narrow` shrinks
+            to content width — that's still wider than we want for a
+            two-or-three-digit input, so we cap the column with a fixed
+            width here. The has-addons input + % suffix render exactly
+            this wide regardless of viewport.
+        */
+        .pool-row-allocation {
+            min-width: 110px;
+            flex: 0 0 auto;
+        }
+        .pool-row-allocation .input {
+            width: 64px;
+        }
+
+        /*
+            Resolved-info block. Multi-line layout with logo, identity
+            stack, and technical details on separate lines so info has
+            room to breathe instead of cramming onto one line. Hidden
+            until resolution returns something — empty grey card looks
+            like a layout glitch otherwise.
+        */
+        .resolved-info-block {
+            display: flex;
+            gap: 0.7rem;
+            padding: 0.55rem 0.75rem;
+            background: #f0f0f0;
+            border-radius: 4px;
+            margin-bottom: 0.75rem;
+            font-size: 0.85em;
+        }
+
+        /*
+            Action row (override + split buttons). Lives below the
+            resolved-info block.
+        */
+        .pool-row-actions {
+            display: flex;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.6rem;
+        }
+
         .advanced-section {
             margin-top: 0.5rem;
             padding: 0.75rem;
@@ -308,13 +570,294 @@
             border-radius: 4px;
             font-size: 0.9em;
         }
-        .advanced-toggle {
+
+        /*
+            Distribution section.
+
+            Replaces the old always-visible slice list. Default state is
+            collapsed: a single one-line summary with a link to "Split into
+            multiple recipients". When the user opens the editor (or the
+            pool already has >1 slice), the expanded variant shows the
+            slice rows on a left-bordered indent strip so they're visually
+            subordinate to the parent pool — fixes the original problem
+            where slices and pools looked like sibling boxes.
+
+            Re-uses the existing .slice-row styling for individual slices;
+            this block only adds the collapsible wrapper around them.
+        */
+        .distribution-section {
+            margin-top: 0.75rem;
+            padding-top: 0.6rem;
+            border-top: 1px dashed #e5e5e5;
+        }
+        .distribution-expanded-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.4rem;
+        }
+        .distribution-expanded-header .label {
+            margin-bottom: 0;
+        }
+        .distribution-slices {
+            padding-left: 0.85rem;
+            border-left: 2px solid #e5e5e5;
+            margin-bottom: 0.4rem;
+        }
+
+        /*
+            Resolved-info logos and info icon. The 36px logo sits in
+            its own flex column to the left of the identity stack;
+            it falls back to an initial-letter circle when no image
+            URL is available. The info icon is a small clickable button
+            in the top-right of the identity stack.
+        */
+        .resolved-logo {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            overflow: hidden;
+            background: #fff;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .resolved-logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .resolved-logo.resolved-logo-fallback {
+            background: #d8d8d8;
+            color: #555;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .resolved-info-stack {
+            flex: 1;
+            min-width: 0;
+        }
+        .resolved-info-top {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .resolved-info-symbol {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+        .resolved-info-name {
+            color: #6b6b6b;
+            font-size: 0.85em;
+            margin-top: 1px;
+        }
+        .resolved-info-tech {
+            color: #888;
+            font-size: 0.8em;
+            margin-top: 2px;
+        }
+        .resolved-info-icon {
+            color: #b5b5b5;
             cursor: pointer;
-            user-select: none;
+            margin-left: 4px;
+            text-decoration: none;
+        }
+        .resolved-info-icon:hover {
             color: #3273dc;
+        }
+
+        /*
+            Token preview card. Lives next to the Description/Logo
+            inputs and updates live as the user types name/symbol/etc.
+            Mirrors the per-pool resolved-info-block layout so the
+            user sees a consistent representation of their token
+            across the form and the eventual pool list.
+
+            Empty-state styling: when fields are unset, the symbol
+            fallback to "?" and the name shows a placeholder hint in
+            grey italic. Same dimensions as the populated state so the
+            layout doesn't jump around.
+        */
+        .token-preview-row {
+            display: flex;
+            justify-content: center;
+        }
+        .token-preview-row-inner {
+            width: 100%;
+            max-width: 480px;
+        }
+        .token-preview-block {
+            display: flex;
+            gap: 0.7rem;
+            padding: 0.75rem 0.9rem;
+            background: #f0f0f0;
+            border-radius: 4px;
+            font-size: 0.85em;
+            min-height: 84px;
+        }
+        .token-preview-logo {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            overflow: hidden;
+            background: #fff;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        .token-preview-logo img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .token-preview-logo-fallback {
+            background: #d8d8d8;
+            color: #555;
+            font-weight: 600;
+            font-size: 18px;
+        }
+
+        /*
+            Logo upload row: file picker + small live thumbnail of the
+            chosen logo, side-by-side. The thumbnail sits next to the
+            file picker so the user gets immediate visual confirmation
+            of what they uploaded — more obvious than the filename
+            string alone. Same CSS-layered fallback pattern as the
+            preview card's logo so a failed image decode reveals the
+            underlying initial letter.
+        */
+        .logo-upload-row {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        /*
+            Let the file picker take up the available row width so the
+            thumbnail stays anchored to the right. Without this, a long
+            filename would push the thumb past the column boundary.
+            The inner .file-name has its own ellipsis behaviour (Bulma
+            default), so the visible filename truncates gracefully.
+        */
+        .logo-upload-row .file {
+            flex: 1;
+            min-width: 0;
+        }
+        .logo-upload-row .file-name {
+            flex: 1;
+            min-width: 0;
+        }
+        .logo-thumb {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            overflow: hidden;
+            background: #fff;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        .logo-thumb img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .logo-thumb-fallback {
+            background: #d8d8d8;
+            color: #888;
+            font-weight: 600;
+            font-size: 20px;
+        }
+        .token-preview-stack {
+            flex: 1;
+            min-width: 0;
+        }
+        .token-preview-symbol {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+        .token-preview-symbol.is-placeholder {
+            color: #b5b5b5;
+            font-weight: 500;
+            font-style: italic;
+        }
+        .token-preview-name {
+            color: #555;
             font-size: 0.9em;
-            margin-top: 0.5rem;
-            display: inline-block;
+            margin-top: 1px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .token-preview-tech {
+            color: #888;
+            font-size: 0.8em;
+            margin-top: 3px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .token-preview-desc {
+            color: #6b6b6b;
+            font-size: 0.85em;
+            margin-top: 6px;
+            font-style: italic;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            line-clamp: 2;
+        }
+
+        /* Token info modal — logo + name header at top of body. */
+        .token-info-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .token-info-logo {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            object-fit: cover;
+            background: #fff;
+            border: 1px solid #e5e5e5;
+            flex-shrink: 0;
+        }
+        .token-info-titles {
+            min-width: 0;
+        }
+        /*
+            Plain styled name + symbol. We deliberately avoid Bulma's
+            .title/.subtitle pair classes here because Bulma applies
+            negative margins to .subtitle when it directly follows
+            .title — intended for hero-style layouts but causes the
+            two lines to overlap when they're stacked tightly inside
+            a small flex container like ours.
+        */
+        .token-info-name {
+            font-size: 1.15rem;
+            font-weight: 600;
+            line-height: 1.3;
+            margin: 0;
+        }
+        .token-info-symbol {
+            font-size: 0.9rem;
+            color: #7a7a7a;
+            line-height: 1.3;
+            margin-top: 0.1rem;
         }
 
         /* Funding rows */
@@ -382,6 +925,97 @@
     </style>
 </head>
 <body>
+
+    <!--
+        Splash screen. Plays intro.mp4 once when the page loads, then
+        auto-dismisses. User can skip via the button, click anywhere on
+        the backdrop, or press Esc / Space / Enter. Removed entirely
+        from the DOM after dismiss so it doesn't linger as hidden chrome.
+
+        The video does NOT have `autoplay` or `muted` set — playback is
+        triggered manually from JS once we know the window has focus
+        AND no blocking modal is open. This lets the video play with
+        sound (browsers normally block unmuted autoplay) and avoids
+        the case where the splash dismisses before the user even
+        sees it because something else stole focus at load time.
+
+        playsinline keeps the video in-place on mobile rather than
+        triggering full-screen takeover; preload="auto" lets the file
+        start downloading immediately so playback starts quickly once
+        the focus/modal conditions are met.
+    -->
+    <div id="splashScreen" class="splash-screen" role="dialog" aria-label="Intro animation">
+        <video class="splash-video" id="splashVideo" playsinline preload="auto">
+            <source src="intro.mp4" type="video/mp4">
+        </video>
+        <button class="button is-small splash-skip" id="splashSkipBtn" type="button">
+            Skip
+            <span class="icon is-small ml-1"><i class="fas fa-times"></i></span>
+        </button>
+    </div>
+
+    <!--
+        First-run disclaimer. Shown once per browser/profile; agreement
+        is remembered in localStorage. Layered on top of the splash via
+        higher z-index so a user on first run sees this BEFORE the
+        intro video. The splash's playback gating already waits for
+        active modals to close, so the video starts playing only after
+        this gets dismissed (via Agree). If the user clicks Cancel,
+        we close the window — in Electron this terminates the app; in
+        plain web mode it falls back to a "please close this tab"
+        message since browsers may block window.close() for windows
+        not opened by JS.
+    -->
+    <div id="disclaimerModal" class="modal disclaimer-modal" role="dialog" aria-modal="true" aria-labelledby="disclaimerTitle">
+        <div class="modal-background"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title" id="disclaimerTitle">Welcome to Trebuchet</p>
+            </header>
+            <section class="modal-card-body">
+                <p class="mb-4">Before you launch your first token, here are some things you should know.</p>
+
+                <h5 class="title is-6 mb-2">Your funds are your responsibility.</h5>
+                <ul class="disclaimer-list mb-4">
+                    <li>Trebuchet creates an ephemeral wallet to handle the launch. <strong>Back up its mnemonic immediately</strong> — if you lose it, we can't recover it for you.</li>
+                    <li>Anyone with access to the mnemonic controls those funds. Don't share it. Don't paste it anywhere other than a wallet you trust.</li>
+                    <li>Make sure your computer is secure. Malware on your machine can read what Trebuchet generates.</li>
+                </ul>
+
+                <h5 class="title is-6 mb-2">Things can go wrong during a launch.</h5>
+                <ul class="disclaimer-list mb-4">
+                    <li>The launch pays real fees to Raydium (for the liquidity pools), Arweave (for token metadata), and the Solana network. <strong>Those fees aren't refundable if something fails partway through.</strong></li>
+                    <li>Network congestion can cause transactions to fail. We retry where we can, but failures still happen — and a partial launch may leave funds in the temporary wallet that you'll need to sweep manually.</li>
+                    <li>The free Solana public RPC is shared and heavily rate-limited, so transactions stall or fail more often during congestion. <strong>We strongly recommend signing up for a dedicated RPC endpoint from Helius, QuickNode, or similar</strong> — most have a free tier that's plenty for individual launches. You can configure one in the app settings.</li>
+                </ul>
+
+                <h5 class="title is-6 mb-2">What we don't do.</h5>
+                <ul class="disclaimer-list mb-4">
+                    <li>We don't take a cut of your launch. No platform fees, no taxes. Trebuchet is open source — <a href="https://github.com/YOUR-REPO-HERE" target="_blank" rel="noopener">audit the code on GitHub</a> if you want to confirm.</li>
+                    <li>If you go into Customize mode and pair against a non-default quote token, we don't validate that mint for you. Pasting a bad or unintended mint will fail the launch or pair against the wrong asset. Double-check the address before continuing.</li>
+                    <li>We don't undo decisions. Token supply distribution, Fee Key NFT recipients, lock settings — once a launch goes through, those are permanent.</li>
+                </ul>
+
+                <h5 class="title is-6 mb-2">By continuing, you accept that:</h5>
+                <ul class="disclaimer-list mb-4">
+                    <li>You understand the risks above.</li>
+                    <li>You're responsible for your own funds and decisions.</li>
+                    <li>The Trebuchet authors aren't liable for losses, network issues, or anything else that goes wrong during your use of the app.</li>
+                </ul>
+
+                <div class="field disclaimer-agree-field">
+                    <label class="checkbox">
+                        <input type="checkbox" id="disclaimerAgreeCheck">
+                        <strong>I've read this and I understand.</strong>
+                    </label>
+                </div>
+            </section>
+            <footer class="modal-card-foot">
+                <button class="button" id="disclaimerCancelBtn" type="button">Cancel</button>
+                <button class="button is-primary" id="disclaimerAgreeBtn" type="button" disabled>Agree and continue</button>
+            </footer>
+        </div>
+    </div>
 
     <!-- Hero -->
     <section class="hero is-primary">
@@ -600,43 +1234,86 @@
                 <div class="step-body">
 
                     <h4 class="title is-6">Token Details</h4>
-                    <div class="columns">
+                    <div class="columns is-multiline">
                         <div class="column">
                             <div class="field">
                                 <label class="label is-small">Name</label>
                                 <input class="input is-small" type="text" id="tokenName" required placeholder="My Token">
                             </div>
                         </div>
-                        <div class="column">
+                        <div class="column is-narrow">
                             <div class="field">
                                 <label class="label is-small">Symbol</label>
-                                <input class="input is-small" type="text" id="tokenSymbol" required maxlength="10" placeholder="MTK">
+                                <input class="input is-small" type="text" id="tokenSymbol" required maxlength="10" placeholder="MTK" style="width: 120px;">
+                            </div>
+                        </div>
+                        <div class="column is-narrow">
+                            <div class="field">
+                                <label class="label is-small">Total Supply</label>
+                                <input class="input is-small" type="text" inputmode="numeric" id="tokenSupply" required value="1,000,000,000" style="width: 170px;">
+                            </div>
+                        </div>
+                        <div class="column is-narrow">
+                            <div class="field">
+                                <label class="label is-small">Market Cap (USD)</label>
+                                <div class="control has-icons-left">
+                                    <input class="input is-small" type="text" inputmode="numeric" id="targetMarketCap" required value="100,000" style="width: 160px;">
+                                    <span class="icon is-small is-left"><i class="fas fa-dollar-sign"></i></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!--
+                        Description, logo upload, and a small live
+                        thumbnail of the chosen logo, all on one row.
+                        Description is the dominant element; the file
+                        picker is auto-sized; the thumbnail (#tokenLogoThumb)
+                        is a 56px circle that updates live when the
+                        user picks a file, painted by renderTokenPreview
+                        in app.js.
+                    -->
+                    <div class="columns is-multiline mb-2">
+                        <div class="column is-two-thirds">
+                            <div class="field">
+                                <label class="label is-small">Description</label>
+                                <textarea class="textarea is-small" id="tokenDescription" rows="2" placeholder="Brief description"></textarea>
                             </div>
                         </div>
                         <div class="column">
                             <div class="field">
-                                <label class="label is-small">Total Supply</label>
-                                <input class="input is-small" type="number" id="tokenSupply" required value="1000000000">
+                                <label class="label is-small">Logo (PNG/JPG, max 100KB)</label>
+                                <div class="logo-upload-row">
+                                    <div class="file has-name is-small">
+                                        <label class="file-label">
+                                            <input class="file-input" type="file" id="tokenLogo" accept="image/*">
+                                            <span class="file-cta">
+                                                <span class="file-icon"><i class="fas fa-upload"></i></span>
+                                                <span class="file-label">Choose file</span>
+                                            </span>
+                                            <span class="file-name" id="logoFileName">No file selected</span>
+                                        </label>
+                                    </div>
+                                    <div class="logo-thumb logo-thumb-fallback" id="tokenLogoThumb"></div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="field">
-                        <label class="label is-small">Description</label>
-                        <textarea class="textarea is-small" id="tokenDescription" rows="2" placeholder="Brief description"></textarea>
-                    </div>
-
-                    <div class="field">
-                        <label class="label is-small">Logo (PNG/JPG, max 100KB)</label>
-                        <div class="file has-name is-small">
-                            <label class="file-label">
-                                <input class="file-input" type="file" id="tokenLogo" accept="image/*">
-                                <span class="file-cta">
-                                    <span class="file-icon"><i class="fas fa-upload"></i></span>
-                                    <span class="file-label">Choose file</span>
-                                </span>
-                                <span class="file-name" id="logoFileName">No file selected</span>
-                            </label>
+                    <!--
+                        Live preview row. Updated on every input event
+                        from the token-details fields by renderTokenPreview()
+                        in app.js. The .token-preview-row wrapper is
+                        full-width; .token-preview-block inside is
+                        max-width-constrained and centered so on wide
+                        screens it doesn't stretch into an awkward
+                        rectangle. The "Preview" label sits inside the
+                        centered area so it aligns with the card's
+                        left edge rather than being flush to the page.
+                    -->
+                    <div class="field token-preview-row">
+                        <div class="token-preview-row-inner">
+                            <label class="label is-small">Preview</label>
+                            <div class="token-preview-block" id="tokenPreviewBlock"></div>
                         </div>
                     </div>
 
@@ -644,25 +1321,42 @@
 
                     <h4 class="title is-6">Pool Configuration</h4>
 
-                    <div class="field">
-                        <label class="label is-small">Target Launch Market Cap (USD)</label>
-                        <div class="control has-icons-left" style="max-width: 250px;">
-                            <input class="input is-small" type="number" id="targetMarketCap" required value="100000" min="1">
-                            <span class="icon is-small is-left"><i class="fas fa-dollar-sign"></i></span>
-                        </div>
-                        <p class="help">All pools start at the same USD-equivalent token price.</p>
+                    <!--
+                        Simple config — the default pool-configuration UI for
+                        users who don't want to think about pools. Toggle
+                        controls whether to add a flywheel pool alongside the
+                        SOL pool. Most users only see this section.
+                        renderSimpleConfig() in app.js paints the toggle row +
+                        help text + customize button into #simpleConfigBody.
+                    -->
+                    <div id="simpleConfigContainer">
+                        <div id="simpleConfigBody"></div>
                     </div>
 
-                    <label class="label is-small">Pools to Create</label>
-                    <div id="poolList"></div>
-                    <button class="button is-light is-small" id="addPoolBtn">
-                        <span class="icon"><i class="fas fa-plus"></i></span>
-                        <span>Add another pool</span>
-                    </button>
+                    <!--
+                        Customize-mode container — wraps the per-pool UI that
+                        used to be the default. Hidden by default; shown when
+                        the user clicks Customize. Switching back to simple
+                        mode wipes pool customizations and rebuilds defaults.
+                    -->
+                    <div id="customizeConfigContainer" class="hidden">
+                        <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
+                            <label class="label is-small mb-0">Pools to Create</label>
+                            <button type="button" class="button is-small is-light" id="returnToSimpleBtn">
+                                <span class="icon is-small"><i class="fas fa-arrow-left"></i></span>
+                                <span>Use a preset instead</span>
+                            </button>
+                        </div>
+                        <div id="poolList"></div>
+                        <button class="button is-light is-small" id="addPoolBtn">
+                            <span class="icon"><i class="fas fa-plus"></i></span>
+                            <span>Add another pool</span>
+                        </button>
 
-                    <div class="notification is-info is-light is-size-7 my-3 py-2 px-3" id="allocationSummary">
-                        <strong>Total allocated:</strong> <span id="totalAllocPct">0</span>% &nbsp;
-                        (<span id="unallocatedPct">100</span>% will remain in your wallet)
+                        <div class="notification is-info is-light is-size-7 my-3 py-2 px-3" id="allocationSummary">
+                            <strong>Total allocated:</strong> <span id="totalAllocPct">0</span>% &nbsp;
+                            (<span id="unallocatedPct">100</span>% will remain in your wallet)
+                        </div>
                     </div>
 
                     <div class="field">
@@ -968,6 +1662,29 @@
                 <button class="button" id="genericConfirmCancel">Cancel</button>
                 <button class="button is-primary" id="genericConfirmOk">OK</button>
             </footer>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Token Info Modal                                               -->
+    <!-- ============================================================ -->
+    <!--
+      Display-only modal showing the full set of resolved info for a
+      pool's quote token: logo, friendly name, symbol, mint, decimals,
+      USD price, and external explorer links. Body content is rendered
+      by showTokenInfoModal() in app.js. Header has a close button;
+      clicking the modal background also closes it.
+    -->
+    <div class="modal" id="tokenInfoModal">
+        <div class="modal-background" id="tokenInfoBackground"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title">Token information</p>
+                <button class="delete" id="tokenInfoCloseBtn" aria-label="close"></button>
+            </header>
+            <section class="modal-card-body">
+                <div id="tokenInfoBody"></div>
+            </section>
         </div>
     </div>
 
