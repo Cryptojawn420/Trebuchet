@@ -1253,66 +1253,6 @@ app.post('/api/find-funder', async (req, res) => {
   }
 });
 
-app.post('/api/verify-token-safety', async (req, res) => {
-  try {
-    const { tokenMint } = req.body;
-    console.log('Verifying token safety for:', tokenMint);
-
-    const { Connection, PublicKey } = await import('@solana/web3.js');
-    const { getMint } = await import('@solana/spl-token');
-    const { Metadata, PROGRAM_ID } = await import('@metaplex-foundation/mpl-token-metadata');
-
-    // Honor the user's selected RPC (from rpcConfig) rather than the raw env
-    // variable — they can change RPCs via the UI without restarting.
-    const connection = new Connection(getRpcConfig().active);
-    const mintPubkey = new PublicKey(tokenMint);
-
-    const mintInfo = await getMint(connection, mintPubkey);
-    const mintAuthorityRenounced = mintInfo.mintAuthority === null;
-    const freezeAuthorityDisabled = mintInfo.freezeAuthority === null;
-
-    const [metadataPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from('metadata'), PROGRAM_ID.toBuffer(), mintPubkey.toBuffer()],
-      PROGRAM_ID,
-    );
-
-    const metadataAccount = await connection.getAccountInfo(metadataPDA);
-    let metadataImmutable = false;
-    let updateAuthority = null;
-    let updateAuthorityRevoked = false;
-
-    if (metadataAccount) {
-      const metadata = Metadata.deserialize(metadataAccount.data)[0];
-      metadataImmutable = !metadata.isMutable;
-      updateAuthority = metadata.updateAuthority?.toString() || null;
-      if (updateAuthority === '11111111111111111111111111111111') {
-        updateAuthorityRevoked = true;
-      }
-    }
-
-    const isSafe =
-      mintAuthorityRenounced &&
-      freezeAuthorityDisabled &&
-      (metadataImmutable || updateAuthorityRevoked);
-
-    res.json({
-      success: true,
-      tokenMint,
-      isSafe,
-      details: {
-        mintAuthorityRenounced,
-        freezeAuthorityDisabled,
-        metadataImmutable,
-        updateAuthorityRevoked,
-        updateAuthority,
-      },
-    });
-  } catch (error) {
-    console.error('Error verifying token safety:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------

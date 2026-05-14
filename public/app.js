@@ -73,13 +73,6 @@ const FLYWHEELS = {
     description: 'wBTC + ETH reserve flywheel',
     available: true,
   },
-  stable: {
-    key: 'stable',
-    label: 'Stable',
-    mint: '7AL5rfx4Jf1DLFzZpQEPHkmR9BJjpcmWwne1f9xqfmTu',
-    description: 'Stable-token flywheel',
-    available: true,
-  },
   meme: {
     key: 'meme',
     label: 'Meme',
@@ -731,17 +724,35 @@ bind('cancelConfirmProceedBtn', 'click', async () => {
     }
 
     log('Launch ended. The ephemeral wallet was empty — no sweep needed.', 'info');
+    // Mark the user's CURRENT step (before activateStep flips it) as
+    // cancelled so its summary reflects that context. activateStep(6)
+    // below will mark every step 1..5 as completed/preserved and make
+    // step 6 the active terminal step.
     setStepSummary(currentStep, 'cancelled — wallet was empty');
-    // Lock subsequent step interactions. activateStep(6) marks every
-    // earlier step completed; combined with the step-card peek logic
-    // the user can still review (read-only) but can't proceed.
+
+    // Swap Step 6's body: hide the normal transfer form (destination
+    // wallet input + Transfer Assets button), show the cancellation
+    // notice instead. Without this, the user sees a form prompting
+    // them for a destination address even though there's nothing in
+    // the wallet to transfer — confusing and dead-ends them because
+    // we also hide the Transfer Assets button (no submit affordance).
+    // The cancellation panel makes the terminal state explicit.
+    document.getElementById('step6NormalBody').classList.add('hidden');
+    document.getElementById('step6CancelledPanel').classList.remove('hidden');
+
+    // Mark Step 6's summary too, so the collapsed/peek view of the
+    // terminal step also makes the cancellation context obvious
+    // (without this, the user could glance at Step 6 in the step
+    // overview and not realize it was reached via cancel rather
+    // than normal completion).
+    setStepSummary(6, 'launch cancelled');
+
     activateStep(6);
-    // Hide the normal transfer button — there's nothing in the wallet
-    // to transfer, and clicking it would error confusingly.
-    document.getElementById('transferAssetsBtn').classList.add('hidden');
+
     // Refresh the pending-wallets panel — server kept this wallet
     // in the recovery cache (we didn't dismiss), so the user can
-    // see it there if they want to claim later or discard.
+    // see it there if they want to claim a delayed deposit later or
+    // discard the entry permanently.
     loadPendingWallets();
     return;
   }
@@ -1595,6 +1606,8 @@ function renderSimpleConfig() {
         <input type="checkbox" id="simpleFlywheelToggle" ${checked}>
         <strong>Use a flywheel</strong>
       </label>
+      <a class="is-size-7 ml-2" id="simpleFlywheelLearnMore" href="#" role="button"
+         aria-haspopup="dialog" aria-controls="flywheelInfoModal">Learn more</a>
       <div class="select is-small simple-config-dropdown" ${dropdownDisabled}>
         <select id="simpleFlywheelSelect" ${dropdownDisabled}>
           ${options}
@@ -1636,10 +1649,22 @@ function renderSimpleConfig() {
   const select = body.querySelector('#simpleFlywheelSelect');
   const slider = body.querySelector('#simpleFlywheelSlider');
   const sliderReadout = body.querySelector('#simpleFlywheelSliderValue');
+  const learnMoreLink = body.querySelector('#simpleFlywheelLearnMore');
   const splitToggle = body.querySelector('#simpleSplitToggle');
   const splitSlider = body.querySelector('#simpleSplitSlider');
   const splitReadout = body.querySelector('#simpleSplitSliderValue');
   const customizeBtn = body.querySelector('#simpleCustomizeBtn');
+
+  // Learn-more link — opens the static flywheel explainer modal. The link
+  // sits next to the toggle so the user can discover what flywheels do
+  // before deciding to enable one. preventDefault on the click so the
+  // href="#" doesn't scroll the page or change the URL hash.
+  if (learnMoreLink) {
+    learnMoreLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      openFlywheelInfoModal();
+    });
+  }
 
   toggle.addEventListener('change', (e) => {
     simpleConfig.flywheelEnabled = e.target.checked;
@@ -1704,6 +1729,45 @@ function renderSimpleConfig() {
     simpleConfig.mode = 'customize';
     applySimpleConfigMode();
   });
+}
+
+// ===========================================================================
+// Flywheel explainer modal
+// ===========================================================================
+//
+// Static content — no per-instance data, just an explanation of what
+// flywheels are and which one the user should pick. Triggered by the
+// "Learn more" link next to the flywheel toggle in the simple-config
+// block. Modal markup lives in index.html; this just toggles visibility
+// and wires up the close handlers.
+//
+// The close handlers are attached lazily on first open rather than at
+// module load. Reason: the <script src="app.js"> tag appears in
+// index.html BEFORE the modal markup, so the modal's elements don't
+// exist when the script first runs — a top-level attachment would
+// silently no-op (document.getElementById returns null). Same pattern
+// the token-info modal uses; the dataset.closeHandlersWired flag
+// prevents duplicate listeners on repeat opens.
+
+function openFlywheelInfoModal() {
+  const modal = document.getElementById('flywheelInfoModal');
+  if (!modal) return;
+
+  // Wire up close affordances on first open. Three ways to dismiss:
+  // the X in the header, the "Got it" button in the footer, and
+  // clicking the background overlay. The dataset flag makes this
+  // idempotent across reopens.
+  if (!modal.dataset.closeHandlersWired) {
+    const close = () => modal.classList.remove('is-active');
+    ['flywheelInfoCloseBtn', 'flywheelInfoDismissBtn', 'flywheelInfoBackground']
+      .forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('click', close);
+      });
+    modal.dataset.closeHandlersWired = '1';
+  }
+
+  modal.classList.add('is-active');
 }
 
 // Apply the current simpleConfig.mode to the page: hides one container,
@@ -2512,8 +2576,8 @@ function buildPoolNode(pool, idx) {
             <option value="SOL">SOL</option>
           </optgroup>
           <optgroup label="Flywheels">
-            <option value="J1bZFRAFC8ALqAN7ktkcCpobgoeTGfP5Xh1BwCP1oqoj">XLRT (recommended)</option>
-            <option value="7AL5rfx4Jf1DLFzZpQEPHkmR9BJjpcmWwne1f9xqfmTu">DGU (stable flywheel)</option>
+            <option value="J1bZFRAFC8ALqAN7ktkcCpobgoeTGfP5Xh1BwCP1oqoj">XLRT (Reserve flywheel — recommended)</option>
+            <option value="HipYKXiDh3Kjd1jb7ji6jCEsKQMSGWiFJMdtvH8yb5r">Meme flywheel</option>
           </optgroup>
           <optgroup label="Majors">
             <option value="3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh">wBTC (Wormhole)</option>
@@ -5195,7 +5259,43 @@ bind('retryBootstrapsBtn', 'click', async () => {
         `<strong>${successCount}</strong> of ${totalCount} pool${totalCount === 1 ? '' : 's'} ` +
         `completed; the rest are still failing. Click <strong>${newPhase === 'bootstrap' ? 'Retry bootstraps' : 'Resume launch'}</strong> ` +
         `to try again, or sweep the wallet to start over.`;
-      // Resume button stays visible for another attempt.
+      // Resume button stays visible for another attempt. Update its
+      // label too — a retry can shift phases (e.g. main-positions
+      // failure resolves but uncovers a bootstrap-only failure), and
+      // the button label should reflect that. Without this update,
+      // the user would see "Resume launch" even when the work
+      // remaining is just bootstrap retries.
+      const retryLabel = btn.querySelector('span:last-child');
+      if (retryLabel) {
+        retryLabel.textContent = newPhase === 'bootstrap'
+          ? 'Retry bootstraps'
+          : 'Resume launch';
+      }
+      // Same phase-shift concern for the reassurance copy and the
+      // sweep-button label in the fail banner. The initial failure
+      // handler in createLp sets these based on the original phase;
+      // on a retry the phase can change, and the copy needs to follow.
+      if (newPhase === 'bootstrap') {
+        document.getElementById('lpFailReassurance').innerHTML =
+          `<strong>Main positions are in place for every pool.</strong> Only the bootstrap ` +
+          `leg failed for the pools listed above — these pools won't be tradable at the ` +
+          `intended price until their bootstraps land. Click <strong>Retry bootstraps</strong> ` +
+          `to try again (most bootstrap failures are transient RPC issues). If retrying ` +
+          `keeps failing, sweep the wallet to your destination and manually add bootstrap ` +
+          `liquidity in the Raydium UI later.`;
+        document.getElementById('continueToTransferAfterFailBtnLabel').textContent =
+          'Or sweep to destination instead';
+      } else {
+        document.getElementById('lpFailReassurance').innerHTML =
+          `<strong>Your assets are safe</strong> — they're still in the ephemeral wallet ` +
+          `(SOL, any auto-swapped quote tokens, and the LP NFTs from pools that did succeed). ` +
+          `Click <strong>Resume launch</strong> to retry just the missing pools — already-` +
+          `created pools will be skipped. If retrying keeps failing, you can sweep the wallet ` +
+          `back to your destination as a last resort; the pools that succeeded above are ` +
+          `permanent on-chain.`;
+        document.getElementById('continueToTransferAfterFailBtnLabel').textContent =
+          'Skip to Transfer Assets';
+      }
     } catch (e) {
       log(`Resume failed: ${e.message}`, 'danger');
       // Show the fail banner again so the user can see what to do next.
@@ -5603,27 +5703,32 @@ renderTokenPreview();
 // ---------------------------------------------------------------------------
 //
 // Once the user has progressed past wallet generation, accidentally
-// closing or reloading the tab loses session context (tempWallet, the
+// closing or reloading the window loses session context (tempWallet, the
 // in-progress pools array, the funding-requirement estimate, etc).
 // The wallet's secret key is still in the pending-wallets recovery
 // cache server-side, so funds are never lost, but the user has to
 // re-enter their config and re-derive the wallet — friction we can
-// prevent with a simple browser confirmation prompt.
+// prevent with a confirmation prompt before the unload.
 //
 // We only fire the warning when there's genuine state worth preserving:
 //   - currentStep > 1   → wallet has been generated
 //   - currentStep < 6   → we're not on the terminal transfer step
-//   - !isAcquireFlowRunning isn't checked here on purpose; if a swap
-//     is in flight we DEFINITELY want the warning
 //
-// Browsers ignore the actual message text and show their own generic
-// "Leave site? Changes you made may not be saved" prompt — we just
-// need to call preventDefault and return a truthy value.
+// Behavior differs by host:
+//   - In a regular browser: Chrome/Firefox show their own generic "Leave
+//     site? Changes you made may not be saved" dialog. They ignore our
+//     message text; we just need to call preventDefault + set returnValue.
+//   - In Electron: the renderer's beforeunload preventDefault is reported
+//     to the main process via the 'will-prevent-unload' event, which
+//     main.js handles by showing a native dialog. The renderer doesn't
+//     need to do anything different here — same preventDefault pattern.
+//     See main.js for the dialog setup.
 window.addEventListener('beforeunload', (e) => {
   if (currentStep <= 1 || currentStep >= 6) return;
   e.preventDefault();
   // Some browsers (older Chrome, Edge) still read the return value;
-  // newer ones ignore it. Set it for compatibility.
+  // newer ones ignore it. Set it for compatibility. Electron ignores
+  // it too — the native dialog in main.js uses its own copy.
   e.returnValue = 'A launch is in progress. Leaving now will reset the UI; ' +
     'you\'ll need to recover the wallet from the pending-wallets panel.';
   return e.returnValue;

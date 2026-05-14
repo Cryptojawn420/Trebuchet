@@ -1673,10 +1673,14 @@
                                 in a new session — the pools that succeeded above are permanent on-chain.
                             </p>
                         </div>
-                        <!-- Retry button. Shown only for bootstrap-phase failures
-                             where the pools exist on-chain and we just need to
-                             retry the bootstrap leg. Hidden by default; JS reveals
-                             when failedPhase==='bootstrap'. -->
+                        <!-- Resume button. Shown for any post-pre-flight
+                             failure (main-positions or bootstrap phase).
+                             JS toggles its label text between "Resume launch"
+                             and "Retry bootstraps" based on which phase
+                             failed. Calls /api/resume-launch which skips
+                             already-completed allocations and retries the
+                             rest. Hidden by default; JS reveals via the
+                             createLp failure handler. -->
                         <button class="button is-primary mt-2 hidden" id="retryBootstrapsBtn">
                             <span class="icon"><i class="fas fa-redo"></i></span>
                             <span>Retry bootstraps</span>
@@ -1699,25 +1703,50 @@
                     <span class="icon step-chevron"><i class="fas fa-chevron-down"></i></span>
                 </div>
                 <div class="step-body">
-                    <p class="is-size-7 mb-3">Sweeps everything still in the ephemeral wallet — leftover launched tokens, SOL, and any Fee Key NFTs (from locked positions) — to your destination wallet.</p>
+                    <!--
+                      Normal Step 6 content — destination wallet entry and
+                      transfer button. Shown by default. Hidden when the
+                      user reaches Step 6 via the empty-wallet cancel
+                      flow (no funds to transfer means no use for this
+                      form); the step6CancelledPanel below takes its
+                      place in that case.
+                    -->
+                    <div id="step6NormalBody">
+                        <p class="is-size-7 mb-3">Sweeps everything still in the ephemeral wallet — leftover launched tokens, SOL, and any Fee Key NFTs (from locked positions) — to your destination wallet.</p>
 
-                    <div class="field">
-                        <label class="label is-small">Destination Wallet</label>
-                        <input class="input is-small is-family-monospace" type="text" id="destinationWallet" placeholder="Your real Solana wallet address">
-                        <p class="help">Paste the full address. Don't rely on prefix/suffix matches.</p>
+                        <div class="field">
+                            <label class="label is-small">Destination Wallet</label>
+                            <input class="input is-small is-family-monospace" type="text" id="destinationWallet" placeholder="Your real Solana wallet address">
+                            <p class="help">Paste the full address. Don't rely on prefix/suffix matches.</p>
+                        </div>
+
+                        <button class="button is-primary" id="transferAssetsBtn">
+                            <span class="icon"><i class="fas fa-paper-plane"></i></span>
+                            <span>Transfer Assets</span>
+                        </button>
+
+                        <div id="transferResult" class="hidden mt-3">
+                            <div class="notification is-success is-light is-size-7 py-2 px-3">
+                                <p><strong>Done!</strong></p>
+                                <p>Tokens transferred: <span id="tokensTransferred"></span></p>
+                                <p>SOL transferred: <span id="solTransferred"></span></p>
+                                <p>NFTs transferred: <span id="nftsTransferred"></span></p>
+                            </div>
+                        </div>
                     </div>
 
-                    <button class="button is-primary" id="transferAssetsBtn">
-                        <span class="icon"><i class="fas fa-paper-plane"></i></span>
-                        <span>Transfer Assets</span>
-                    </button>
-
-                    <div id="transferResult" class="hidden mt-3">
-                        <div class="notification is-success is-light is-size-7 py-2 px-3">
-                            <p><strong>Done!</strong></p>
-                            <p>Tokens transferred: <span id="tokensTransferred"></span></p>
-                            <p>SOL transferred: <span id="solTransferred"></span></p>
-                            <p>NFTs transferred: <span id="nftsTransferred"></span></p>
+                    <!--
+                      Cancellation notice — shown only via the empty-wallet
+                      cancel path (cancelMode === 'end_launch'). Replaces
+                      the normal Step 6 content above so the user sees a
+                      clear terminal state rather than an empty wallet
+                      transfer form they can't actually submit.
+                    -->
+                    <div id="step6CancelledPanel" class="hidden">
+                        <div class="notification is-info is-light is-size-7">
+                            <p class="mb-2"><strong>Launch cancelled.</strong></p>
+                            <p class="mb-2">The ephemeral wallet was empty, so there was nothing to refund. Nothing was spent on-chain, and no token or pools were created.</p>
+                            <p class="mb-0">To start a new launch, close and reopen the app.</p>
                         </div>
                     </div>
                 </div>
@@ -1858,6 +1887,74 @@
             <section class="modal-card-body">
                 <div id="tokenInfoBody"></div>
             </section>
+        </div>
+    </div>
+
+    <!--
+      Flywheel explainer modal. Opened by the "Learn more" link next to
+      the "Use a flywheel" toggle in the simple-config block. The content
+      is static (no per-instance data) so it lives directly in the markup
+      rather than being built in JS — easier to edit, easier to review.
+    -->
+    <div class="modal" id="flywheelInfoModal">
+        <div class="modal-background" id="flywheelInfoBackground"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title">What are flywheels?</p>
+                <button class="delete" id="flywheelInfoCloseBtn" aria-label="close"></button>
+            </header>
+            <section class="modal-card-body">
+                <div class="content is-size-7">
+                    <p>
+                        A <strong>flywheel</strong> is a quote token chosen specifically because it sits in
+                        multiple liquidity pools with other interesting tokens. When someone buys your launched
+                        token through the flywheel pool, the SOL or other asset they trade in flows into the
+                        flywheel token's broader pool network — meaning <strong>your launch can pull in
+                        arbitrage volume from exotic pairs across the ecosystem</strong>, and price action
+                        from those paired assets can correlate back to your token.
+                    </p>
+                    <p>
+                        When the flywheel token gets bought (because someone is buying your token), the supply
+                        of its paired assets gets pulled into those LPs. Later, if one of those paired assets
+                        appreciates, an arbitrage opportunity may open up that returns the favor — pushing
+                        value back toward your token. Exotic pairs are two-way streets, though: if the paired
+                        assets <em>decline</em> in value, your token can absorb that pressure too. There is
+                        always risk involved.
+                    </p>
+
+                    <h6 class="title is-6 mb-2 mt-4">Reserve flywheel <span class="tag is-info is-light is-small ml-2">lower risk</span></h6>
+                    <p>
+                        Paired with an ETH-backed token, a BTC-backed token, and a stable-backed flywheel
+                        token. The goal is to act as a <strong>store of value and a hedge against SOL</strong>.
+                        Both BTC and ETH are battle-tested stores of value; the stable component dampens
+                        volatility. Less downside risk than the Meme flywheel, but typically generates less
+                        volume.
+                    </p>
+
+                    <h6 class="title is-6 mb-2 mt-4">Meme flywheel <span class="tag is-warning is-light is-small ml-2">higher risk, higher volume</span></h6>
+                    <p>
+                        Paired with popular meme tokens that have stood the test of time and retained active
+                        communities and attention. Has a <strong>higher chance of generating meaningful volume</strong>
+                        — meme markets trade actively — but more downside exposure if those paired memes lose
+                        value.
+                    </p>
+
+                    <h6 class="title is-6 mb-2 mt-4">Which should I pick?</h6>
+                    <p>
+                        Rule of thumb: <strong>if you're launching something serious</strong> — a project
+                        token, a utility token, a brand — <strong>use the Reserve flywheel</strong>. The lower
+                        risk profile matches the longer-term posture.
+                    </p>
+                    <p>
+                        <strong>If you're launching a meme token</strong>, <strong>use the Meme flywheel</strong>.
+                        The volume and attention dynamics are aligned, and the risk profile matches the
+                        meme-token category in general.
+                    </p>
+                </div>
+            </section>
+            <footer class="modal-card-foot">
+                <button class="button" id="flywheelInfoDismissBtn">Got it</button>
+            </footer>
         </div>
     </div>
 

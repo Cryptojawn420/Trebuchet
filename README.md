@@ -103,6 +103,37 @@ Fee Keys are transferable NFTs, so recipients aren't trapped — they
 can sell on a secondary NFT market if they need liquidity. The locked
 LP stays locked regardless of who holds the key.
 
+### Flywheels
+
+Trebuchet ships with two pre-configured **flywheel** quote tokens:
+**Reserve** and **Meme**. A flywheel is a quote token chosen
+specifically because it sits in multiple liquidity pools with other
+interesting tokens. When someone buys your launched token through the
+flywheel pool, the SOL or other asset they trade in flows into the
+flywheel token's broader pool network — your launch can pull in
+arbitrage volume from exotic pairs across the ecosystem, and price
+action from those paired assets can correlate back to your token.
+
+The default launch is a 90/10 split: a SOL pool with 90% of supply,
+plus a flywheel pool with the remaining 10%. The flywheel slice is
+small but does real work — it gives the token immediate exposure to
+arbitrage flow that a pure SOL launch wouldn't have. You can disable
+the flywheel entirely, switch between Reserve and Meme, or adjust the
+percentage (5–30%) in the Step 2 panel.
+
+- **Reserve flywheel** — paired with an ETH-backed token, a
+  BTC-backed token, and a stable-backed flywheel token. Acts as a
+  store of value and a hedge against SOL. Lower downside risk, less
+  volume. Use this for serious projects, utility tokens, or anything
+  with a long-term posture.
+- **Meme flywheel** — paired with popular meme tokens that have
+  retained active communities and attention. Higher chance of
+  generating meaningful volume, more downside exposure if those paired
+  memes decline. Use this for meme launches.
+
+The "Learn more" link next to the flywheel toggle in the app expands
+on the mechanics and risk tradeoffs.
+
 ### Pairing with non-SOL tokens
 
 Every CLMM pool has a quote token. SOL is the obvious default and what
@@ -129,8 +160,10 @@ Don't pair with something whose risk profile you don't understand.
 ## How to launch a token
 
 The app walks through six steps. Each step unlocks the next when its
-prerequisites are met. You can always scroll back up to revisit an
-earlier step.
+prerequisites are met. You can scroll up to a completed step to review
+it (the fields go read-only), but you can't go back and change inputs
+once a step is completed — that's what Cancel & Refund is for if you
+need to start over.
 
 ### Step 1 — Generate temporary wallet
 
@@ -164,12 +197,16 @@ genuinely just a paranoia option, not a normal step.
 - **Target launch market cap (USD)** — sets the initial price. If you
   pick $100,000 with a 1B supply, each token is worth $0.0001. All
   pools start at the same USD-equivalent price.
-- **Pools to create** — at minimum one pool, paired with SOL. You can
-  add more pools paired with USDC, USDT, or any other token mint, and
-  split your supply across them. The percentages need to add up to
-  ≤100% — anything left over stays in your wallet. See *Pool design*
-  above for why you might want multiple pools, or pools paired with
-  something other than SOL.
+- **Use a flywheel** (default on, 10% Reserve) — adds a second pool
+  paired with the chosen flywheel quote token for arbitrage volume
+  exposure. See *Flywheels* above. Untoggle for a pure SOL launch.
+- **Split the LP** (default off) — splits the SOL pool into multiple
+  positions, each minting its own Fee Key NFT. Useful for partial
+  fee-stream giveaways or sales (see *Splitting liquidity* above).
+- **Customize pools manually** — for anything more elaborate than the
+  defaults: multiple non-SOL pools, custom quote tokens, per-pool
+  splits, external Fee Key recipients. The simple panel covers
+  ~90% of launches; the Customize view is there when you need it.
 - **Lock liquidity (Burn & Earn)** — leave this on. It permanently
   locks the LP position and gives you a transferable NFT (the "Fee
   Key") that collects trading fees forever. Without it, your liquidity
@@ -183,6 +220,14 @@ The app shows you exactly how much SOL (and any quote tokens for
 non-SOL pools) need to land in the temporary wallet. Send those
 amounts from your funding wallet. Click **Refresh balances** until
 everything turns green, then **Continue to Token Creation**.
+
+For non-SOL quote tokens (flywheels, USDC, custom pairs), Trebuchet
+can **auto-swap** the small amount needed from your SOL deposit — no
+need to source those tokens separately. After your SOL lands, click
+**Acquire quote tokens** to run the swap. If a swap can't be routed
+(an obscure quote token with no Raydium liquidity path) the row
+auto-converts to a manual prefund row and you can send those tokens
+yourself.
 
 The "Show cost breakdown" link expands an itemised list — pool
 creation rent, position NFT mint fees, Metaplex metadata fees, network
@@ -204,14 +249,23 @@ metadata. This is intentional — it's what makes the launch credible.
 ### Step 5 — Create pools and lock liquidity
 
 Click **Create Pools**. The app creates each Raydium CLMM pool you
-configured, opens a single-sided position in each, and (if you left
-the Burn & Earn checkbox on) locks the position and mints a Fee Key
-NFT to the temporary wallet.
+configured, opens the main single-sided positions (locked with Burn
+& Earn if enabled), then runs a "bootstrap" pass that opens a tiny
+straddle position in each pool to make it tradable at the intended
+price.
 
-This is the step that's most sensitive to RPC quality. If a pool
-creation fails partway through, the app will tell you which one and
-let you retry, or let you skip to Step 6 to recover whatever did
-succeed plus any unspent SOL.
+The bootstrap phase runs after every pool's main positions are in
+place, so no pool becomes tradable until they all are — this prevents
+swap activity on an earlier pool from moving prices relative to the
+later pools while they're still being built.
+
+If something fails partway through, the app surfaces what completed
+and offers an in-place **Resume launch** button. The resume path
+skips the already-completed pools (those are immutable on-chain
+anyway) and retries just the failed work. Most transient failures
+(RPC blips, slippage drift) clear up on retry. You can also fall
+back to **Skip to Transfer Assets** to sweep the wallet and start
+over with a fresh token; the pools that did succeed stay on-chain.
 
 ### Step 6 — Sweep assets to your destination wallet
 
@@ -227,6 +281,26 @@ Click **Confirm and Transfer**. The app sweeps:
 
 Done. The temporary wallet is now empty and your destination wallet
 holds everything that matters.
+
+### Cancel & Refund — when (not) to use it
+
+The **Cancel & Refund** button in the top-right is the bail-out path,
+not the retry path. Use it when:
+
+- You want to abandon the launch and recover whatever's in the
+  temporary wallet to a destination wallet.
+- A failure can't be recovered via Resume launch (rare — only if
+  the on-chain state is unrecoverably partial).
+
+Don't reach for it just because a step failed. Most failures are
+transient and the in-place retry buttons (Resume launch, Retry
+bootstraps, per-row swap retries) get you through cleanly without
+restarting. Cancelling means you lose the cost of any work that
+already landed on-chain.
+
+If the wallet is still empty when you click Cancel, the dialog shifts
+to "End Launch" mode — it just locks the UI without doing a sweep,
+since there's nothing to refund.
 
 ---
 
@@ -265,17 +339,49 @@ top of the page is your paid endpoint and not the public mainnet
 fallback.
 
 **"Pool creation succeeded for one pool but failed for another."**
-Use the **Skip to Transfer Assets** button on Step 5 to move to
-Step 6. The successfully-created pools are real; you can recover
-their Fee Keys plus any leftover SOL.
+Click **Resume launch** in the failure banner. The app will skip the
+pools that already succeeded (they're permanent on-chain) and retry
+just the failed work. You can resume multiple times — each pass only
+attempts what's still missing. If retrying keeps failing, use **Skip
+to Transfer Assets** to sweep and start over with a different config.
+
+**"A pool's bootstrap failed but the pool exists."**
+Click **Retry bootstraps**. The pool is real and your main positions
+are locked; only the small straddle position that makes it tradable
+at the launch price failed. Retrying is safe and usually clears
+transient errors.
+
+**"A quote token couldn't be auto-swapped."**
+The row auto-converts to a manual prefund: send the listed amount of
+that token to the temporary wallet yourself. Alternatively, click the
+per-row retry button to attempt the swap again — useful for transient
+errors that the bulk Acquire didn't get past.
+
+**"The compatibility check says my quote token isn't supported."**
+Some Token-2022 mints use extensions Raydium doesn't allow (transfer
+hooks, pausable, default account state, etc). Trebuchet catches these
+in a pre-flight pass before spending any SOL — pick a different quote
+token or use the standard SPL Token equivalent if one exists. The
+check accepts every Token-2022 extension Raydium's on-chain code
+permits, including TransferFeeConfig.
 
 **"I closed the app in the middle of a launch."**
-Reopen it. The temporary wallet's recovery phrase is automatically
-saved (encrypted at rest using your OS keychain) when it's generated
-in Step 1, and shown again in the recovery panel at the top of the
-page on next launch. Copy that phrase, import it into Phantom or
-Solflare, and recover any SOL/tokens manually. Once you're done,
-click Discard to clear the entry.
+The temporary wallet's secret key is automatically saved (encrypted
+at rest via your OS keychain) when generated in Step 1. On next
+launch of the app, the **Pending Wallets** panel at the top of the
+page shows the wallet with a button to copy its recovery phrase or
+secret key. Import that into Phantom or Solflare to recover any
+SOL/tokens manually. Once you're done, click Discard on the panel
+entry to clear it.
+
+When you actually try to close the app mid-launch via the X button,
+a confirmation dialog appears first asking whether to leave or stay,
+so accidental closes are caught before they happen.
+
+**"I want to launch with a quote token I don't see in the dropdown."**
+Use Customize mode in Step 2 and pick "Custom mint…" in the quote
+token dropdown. Paste any SPL or Token-2022 mint address. The app
+resolves its symbol, price, and Raydium compatibility on the spot.
 
 ---
 
@@ -296,9 +402,15 @@ Source files of interest:
 
 - `server.js` — Express API
 - `tokenService.js` — wallet generation, SPL mint via Metaplex Umi
-- `lpService.js` — Raydium CLMM pool + position creation, Burn & Earn
+- `lpService.js` — Raydium CLMM pool + position creation, Burn & Earn,
+  bootstrap phase, resume-launch orchestration, Token-2022
+  compatibility check
+- `swapService.js` — SOL → quote-token auto-swap via Raydium Trade API
 - `walletHelpers.js` — multi-token balance + NFT enumeration/sweep
+- `tokenInfoService.js` — quote-token resolution (symbol, decimals,
+  price, on-chain metadata)
 - `rpcConfig.js` — persistent RPC endpoint settings
+- `pendingWallets.js` + `secretStore.js` — encrypted recovery cache
 - `public/` — single-page frontend (Bulma + vanilla JS)
 - `main.js` — Electron entry point
 

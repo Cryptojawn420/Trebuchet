@@ -13,7 +13,7 @@
 // a desktop app, which is fine in practice — plenty of real Electron
 // apps are built this way.
 
-import { app, BrowserWindow, Menu, shell, safeStorage } from 'electron';
+import { app, BrowserWindow, Menu, shell, safeStorage, dialog } from 'electron';
 import { promises as fs } from 'node:fs';
 import net from 'node:net';
 import http from 'node:http';
@@ -467,6 +467,55 @@ function createWindow() {
   });
 
   attachContextMenu(win.webContents);
+
+  // When the user hits the window's X (or Cmd/Ctrl+W, or quits via the
+  // app menu), Chromium fires the renderer's beforeunload event. The
+  // renderer (see the window.addEventListener('beforeunload') at the
+  // bottom of public/app.js) returns a non-empty value when a launch
+  // is in progress, signalling "the unload should be prevented".
+  //
+  // In a browser, this would trigger Chrome/Firefox's native "Leave
+  // site? Changes you may not be saved" dialog. In Electron, the
+  // default behavior is different: the close is SILENTLY blocked, no
+  // dialog shown. The user clicks X, nothing happens, they have no
+  // idea why. That's the bug we're fixing here.
+  //
+  // The fix is to listen for `will-prevent-unload` on the webContents
+  // — Electron's signal that beforeunload tried to cancel the unload —
+  // and show our own native confirmation dialog.
+  //
+  // Counterintuitive API note: calling event.preventDefault() here
+  // means "prevent the prevention" — i.e. allow the close to proceed.
+  // Not calling preventDefault() leaves the default behavior intact
+  // (window stays open). The naming is awkward but the Electron docs
+  // are clear on this.
+  win.webContents.on('will-prevent-unload', (event) => {
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'question',
+      buttons: ['Stay', 'Leave anyway'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Launch in progress',
+      message: 'A launch is in progress.',
+      detail:
+        'Anything created on-chain so far (token mint, pools) is permanent. ' +
+        'If you close now, you\'ll need to recover the ephemeral wallet from ' +
+        'the Pending Wallets panel next time you open the app — its secret ' +
+        'key is saved in your OS keychain, so the funds remain accessible.\n\n' +
+        'In-progress UI state (current step, pool config you\'ve typed) will ' +
+        'be lost.',
+    });
+    if (choice === 1) {
+      // User chose "Leave anyway". preventDefault on the will-prevent-unload
+      // event tells Electron to ignore the renderer's beforeunload return
+      // value and proceed with the unload — counterintuitive naming, but
+      // see the Electron docs for `will-prevent-unload`.
+      event.preventDefault();
+    }
+    // Otherwise (choice === 0, "Stay") we do nothing. The default
+    // behavior keeps the window open.
+  });
+
   win.loadURL(`http://127.0.0.1:${serverPort}/`);
 }
 
