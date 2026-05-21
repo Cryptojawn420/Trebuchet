@@ -1,6 +1,5 @@
 /node_modules
 /test
 rpcConfig.json
-package-lock.json
 files.zip
 dist/
