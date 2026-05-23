@@ -5,7 +5,10 @@
   "main": "main.js",
   "type": "module",
   "license": "MIT",
-  "author": "",
+  "author": {
+  "name": "Trebuchet Dev",
+  "email": "trebuchet-dev@users.noreply.github.com"
+},
 
   "scripts": {
     "start": "electron .",

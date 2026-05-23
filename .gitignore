@@ -3,8 +3,4 @@
 rpcConfig.json
 package-lock.json
 files.zip
-dist/builder-debug.yml
-dist/builder-effective-config.yaml
-dist/Trebuchet Setup 1.0.0.exe.blockmap
-/dist/win-unpacked
-dist/trebuchet-desktop-1.0.0-x64.nsis.7z
+dist/
